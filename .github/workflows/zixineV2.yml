@@ -32,8 +32,7 @@ jobs:
           CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
           
           echo "Downloading Clang 19..."
-          curl -L "${CLANG_URL}" | tar -xz -C toolchain/clang
-          
+          curl -L "${CLANG_URL}" | tar -xz -C toolchain/clang          
       - name: Prepare & Configure Kernel
         run: |
        # Set Path
