@@ -2,6 +2,11 @@ name: Build zixineKernel-V2-SukiSUxSF
 
 on:
   workflow_dispatch:
+    inputs:
+      DEFCONFIG_NAME:
+        description: 'Defconfig name (e.g., vendor/lito_defconfig atau gki_defconfig)'
+        required: true
+        default: 'gki_defconfig' # Default ke gki_defconfig jika tidak diisi
 
 jobs:
   build:
@@ -17,64 +22,119 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
+      # --- START: NEW STEP FOR XIAOMI HACK ---
+      - name: Apply Xiaomi DRM/Flicker Fix
+        run: |
+          echo "Applying DRM compatibility patches for Xiaomi devices (Garnet/Marble fix)..."
+          
+          # 1. Hapus cek versi simbol di kernel/module.c
+          # Ini mencegah error saat modul pihak ketiga (seperti KSU) dimuat.
+          sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
+          
+          # 2. Hapus cek valid clones di drivers/gpu/drm/drm_atomic_helper.c
+          # Ini mengatasi masalah flicker/bootloop terkait DRM/GPU driver.
+          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
+          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
+          
+          echo "Xiaomi DRM fixes applied successfully."
+      # --- END: NEW STEP FOR XIAOMI HACK ---
+
       - name: Install Dependencies
         run: |
           echo "Installing build dependencies..."
           sudo apt-get update
-          # Ditambahkan: libelf-dev, zlib1g-dev, dwarves (fix error resolve_btfids)
           sudo apt-get install -y build-essential bc bison flex libssl-dev git curl \
           python3 python3-pip lld zip unzip libncurses5-dev \
           libelf-dev zlib1g-dev dwarves
 
       - name: Setup Toolchain (Clang 20)
         run: |
-          mkdir -p toolchain/clang
+          TOOLCHAIN_DIR="$(pwd)/toolchain"
+          mkdir -p "$TOOLCHAIN_DIR/clang"
           CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
           
           echo "Downloading Clang 20..."
-          curl -L "${CLANG_URL}" | tar -xz -C toolchain/clang
+          curl -L "${CLANG_URL}" | tar -xz -C "$TOOLCHAIN_DIR/clang"
           
-      - name: Prepare & Configure Kernel
+          echo "TOOLCHAIN_DIR=$TOOLCHAIN_DIR" >> $GITHUB_ENV
+          echo "CLANG_DIR=$TOOLCHAIN_DIR/clang" >> $GITHUB_ENV
+          echo "PATH=$TOOLCHAIN_DIR/clang/bin:$PATH" >> $GITHUB_ENV
+
+      - name: Prepare & Configure Kernel (Defconfig & Tweaks)
         run: |
-          # Set Path
-          export PATH="$(pwd)/toolchain/clang/bin:$PATH"
+          # VARIABEL LINGKUNGAN WAJIB UNTUK LLVM/CLANG
           export ARCH=arm64
           export LLVM=1
-          
-          echo "Generating GKI defconfig..."
-          common DEFCONFIG="ARCH/arm64/configs/gki_defconfig"
+          export CLANG_TRIPLE=aarch64-linux-gnu- 
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
-         # --- Custom Configs ---
-          
-          # 1. Set Kernel Name
-          scripts/config --file out/.config --set-str LOCALVERSION "-${KERNEL_NAME}"
-          
-          # 2. Configure LTO
-          echo "Configuring LTO..."
-          scripts/config --file out/.config \
-              -e LTO_CLANG \
-              -d LTO_NONE \
-              -e LTO_CLANG_THIN \
-              -d LTO_CLANG_FULL \
-              -e THINLTO
+          echo "Generating defconfig: ${{ inputs.DEFCONFIG_NAME }}"
+          make O=out ${{ inputs.DEFCONFIG_NAME }}
 
-          # 3. Enable SukiSU KPM
-          echo "Enabling SukiSU KPM..."
-          scripts/config --file out/.config -e KPM
+          # --- Custom Configs (Tweak Performa) ---
+          if [ -f out/.config ]; then
+            echo "Applying Custom Configs and Performance Tweaks..."
+            
+            # 1. Set Kernel Name
+            scripts/config --file out/.config --set-str LOCALVERSION "-${KERNEL_NAME}"
+            
+            # 2. Configure LTO
+            scripts/config --file out/.config \
+                -e LTO_CLANG \
+                -d LTO_NONE \
+                -e LTO_CLANG_THIN \
+                -d LTO_CLANG_FULL \
+                -e THINLTO
 
-          # 4. Disable Certificate Signing (Mencegah error keys)
-          echo "Disabling System Trusted Keys..."
-          scripts/config --file out/.config -d SYSTEM_TRUSTED_KEYS
-          scripts/config --file out/.config -d SYSTEM_REVOCATION_KEYS
+            # 3. Enable SukiSU KPM
+            scripts/config --file out/.config -e KPM
+
+            # 4. Disable Certificate Signing
+            scripts/config --file out/.config -d SYSTEM_TRUSTED_KEYS
+            scripts/config --file out/.config -d SYSTEM_REVOCATION_KEYS
+            
+            # --- TWEAKS BARU (Kyber, BBR, HZ 300) ---
+            
+            # 5. I/O Scheduler: Kyber
+            echo "-> Enabling Kyber I/O Scheduler..."
+            scripts/config --file out/.config -e BLK_MQ_SCHED_KYBER
+            
+            # 6. Tick Timer Frequency: 300 HZ
+            echo "-> Setting Tick Timer Freq to 300 HZ..."
+            scripts/config --file out/.config -d HZ_100 -d HZ_250 -d HZ_1000 -d HZ_1200 -e HZ_300
+                                             
+            # 7. Networking Tweaks: BBR dan TCP Fastopen
+            echo "-> Enabling BBR TCP Congestion Control and TCP Net Tweak..."
+            scripts/config --file out/.config -e TCP_CONG_BBR \
+                                             -e TCP_FASTOPEN \
+                                             -e TCP_CONG_ADVANCED \
+                                             --set-str DEFAULT_TCP_CONG "bbr"
+            
+            # Simpan perubahan konfigurasi
+            make O=out savedefconfig
+            mv out/defconfig out/.config
+          else
+             echo "ERROR: Defconfig creation failed. Check the name: ${{ inputs.DEFCONFIG_NAME }}"
+             exit 1 
+          fi
+
 
       - name: Build Kernel Image
         run: |
-          export PATH="$(pwd)/toolchain/clang/bin:$PATH"
           export ARCH=arm64
           export LLVM=1
-          
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
           echo "Starting Build..."
-          make -j"$(nproc --all)" O=out Image
+          make -j"$(nproc --all)" O=out Image \
+          LLVM=1 \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+          LD=ld.lld
 
       - name: Apply SukiSU Patch
         run: |
@@ -107,4 +167,3 @@ jobs:
           name: ${{ env.KERNEL_NAME }}-Image
           path: out/arch/arm64/boot/Image
           compression-level: 9
-          
