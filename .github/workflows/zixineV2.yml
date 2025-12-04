@@ -42,7 +42,7 @@ jobs:
           export LLVM=1
           
           echo "Generating GKI defconfig..."
-          common DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          common DEFCONFIG="ARCH/arm64/configs/gki_defconfig"
 
          # --- Custom Configs ---
           
