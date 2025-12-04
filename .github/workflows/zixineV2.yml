@@ -26,12 +26,12 @@ jobs:
           python3 python3-pip lld zip unzip libncurses5-dev \
           libelf-dev zlib1g-dev dwarves
 
-      - name: Setup Toolchain (Clang 19)
+      - name: Setup Toolchain (Clang 20)
         run: |
           mkdir -p toolchain/clang
-          CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
+          CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
           
-          echo "Downloading Clang 19..."
+          echo "Downloading Clang 20..."
           curl -L "${CLANG_URL}" | tar -xz -C toolchain/clang
           
       - name: Prepare & Configure Kernel
