@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       DEFCONFIG_NAME:
-        description: 'Defconfig name (e.g., vendor/lito_defconfig atau gki_defconfig)'
+        description: 'Defconfig name (e.g., vendor/lito_defconfig atau arch/arm64/configs/gki_defconfig)'
         required: true
-        default: 'gki_defconfig' 
+        default: 'arch/arm64/configs/gki_defconfig' # Default diubah ke path penuh
 
 jobs:
   build:
@@ -21,25 +21,38 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 1
+      
+      # --- LANGKAH PENTING BARU: Force Submodule/GKI Sync ---
+      - name: Force GKI Submodule Initialization (Crucial Fix)
+        run: |
+          echo "Ensuring all submodules and GKI directories are present..."
+          # Perintah ini akan memastikan submodul ditarik, termasuk folder 'common' jika itu submodul.
+          git submodule update --init --recursive || true
+          # Jika Anda menggunakan manifest/repo, Anda mungkin perlu perintah repo init/sync di sini.
+          # Asumsi: kernel source GKI berada di folder 'common' setelah checkout.
+          
+          # Cek keberadaan file sebelum patching
+          if [ ! -f "common/kernel/module.c" ]; then
+              echo "ERROR: common/kernel/module.c TIDAK DITEMUKAN. Periksa struktur repositori Anda."
+              # Jika ini GKI Manifest, Anda mungkin perlu langkah 'repo sync' di sini.
+              exit 1
+          fi
 
-      # --- START: PERBAIKAN PATH DI SINI ---
-      - name: Apply Xiaomi DRM/Flicker Fix (Path Corrected)
+      - name: Apply Xiaomi DRM/Flicker Fix (Final Check)
         run: |
           echo "Applying DRM compatibility patches for Xiaomi devices (Garnet/Marble fix)..."
           
-          # 1. Hapus cek versi simbol di kernel/module.c
-          # PATH DIPERBAIKI: common/kernel/module.c
+          # 1. Hapus cek versi simbol di common/kernel/module.c
           sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' common/kernel/module.c
           
-          # 2. Hapus cek valid clones di drivers/gpu/drm/drm_atomic_helper.c
-          # PATH DIPERBAIKI: common/drivers/gpu/drm/drm_atomic_helper.c
+          # 2. Hapus cek valid clones di common/drivers/gpu/drm/drm_atomic_helper.c
           sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' common/drivers/gpu/drm/drm_atomic_helper.c
           sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' common/drivers/gpu/drm/drm_atomic_helper.c
           
           echo "Xiaomi DRM fixes applied successfully."
-      # --- END: PERBAIKAN PATH DI SINI ---
 
       - name: Install Dependencies
+        # (Tetap sama)
         run: |
           echo "Installing build dependencies..."
           sudo apt-get update
@@ -48,6 +61,7 @@ jobs:
           libelf-dev zlib1g-dev dwarves
 
       - name: Setup Toolchain (Clang 20)
+        # (Tetap sama)
         run: |
           TOOLCHAIN_DIR="$(pwd)/toolchain"
           mkdir -p "$TOOLCHAIN_DIR/clang"
@@ -70,29 +84,20 @@ jobs:
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
           echo "Generating defconfig: ${{ inputs.DEFCONFIG_NAME }}"
-          # Defconfig harus dijalankan dari root direktori (di mana folder 'common' berada)
+          # Defconfig menggunakan O=out
           make O=out ${{ inputs.DEFCONFIG_NAME }}
 
           # --- Custom Configs (Tweak Performa) ---
           if [ -f out/.config ]; then
             echo "Applying Custom Configs and Performance Tweaks..."
             
-            # ... (Tweak konfigurasi lainnya)
+            # ... (Semua tweaks konfigurasi yang diminta: Kyber, BBR, HZ 300)
             scripts/config --file out/.config --set-str LOCALVERSION "-${KERNEL_NAME}"
             scripts/config --file out/.config -e LTO_CLANG -d LTO_NONE -e LTO_CLANG_THIN -d LTO_CLANG_FULL -e THINLTO
             scripts/config --file out/.config -e KPM
             scripts/config --file out/.config -d SYSTEM_TRUSTED_KEYS -d SYSTEM_REVOCATION_KEYS
-            
-            # 5. I/O Scheduler: Kyber
-            echo "-> Enabling Kyber I/O Scheduler..."
             scripts/config --file out/.config -e BLK_MQ_SCHED_KYBER
-            
-            # 6. Tick Timer Frequency: 300 HZ
-            echo "-> Setting Tick Timer Freq to 300 HZ..."
             scripts/config --file out/.config -d HZ_100 -d HZ_250 -d HZ_1000 -d HZ_1200 -e HZ_300
-                                             
-            # 7. Networking Tweaks: BBR dan TCP Fastopen
-            echo "-> Enabling BBR TCP Congestion Control and TCP Net Tweak..."
             scripts/config --file out/.config -e TCP_CONG_BBR -e TCP_FASTOPEN -e TCP_CONG_ADVANCED --set-str DEFAULT_TCP_CONG "bbr"
             
             # Simpan perubahan konfigurasi
@@ -105,6 +110,7 @@ jobs:
 
 
       - name: Build Kernel Image
+        # (Tetap sama)
         run: |
           export ARCH=arm64
           export LLVM=1
@@ -121,6 +127,7 @@ jobs:
           LD=ld.lld
 
       - name: Apply SukiSU Patch
+        # (Tetap sama)
         run: |
           cd out/arch/arm64/boot
           
@@ -141,10 +148,12 @@ jobs:
           ls -lh Image
 
       - name: Check Kernel Version Name
+        # (Tetap sama)
         run: |
           strings out/arch/arm64/boot/Image | grep "Linux version" | head -n 1
 
       - name: Upload Artifact
+        # (Tetap sama)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.KERNEL_NAME }}-Image
