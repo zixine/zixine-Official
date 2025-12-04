@@ -42,8 +42,8 @@ jobs:
       - name: Setup Git Identity
         run: |
           echo "[3/15] Setup git identity"
-          git config --global user.email "kingfinix98@gmail.com"
-          git config --global user.name "goten"
+          git config --global user.email "waheid005@gmail.com"
+          git config --global user.name "zixine"
           echo "[✓] Setup completed"
 
       - name: Init Kernel Source
@@ -235,7 +235,7 @@ jobs:
             exit 1
           fi
           # Ganti dengan token/kunci Pixeldrain Anda
-          RESPONSE=$(curl -s -u :53bc8bf8-584d-444e-97e3-715a1b3526bf -F file=@"$IMAGE_PATH" https://pixeldrain.com/api/file)
+          RESPONSE=$(curl -s -u :37d09351-44a8-4bfb-b245-b04e3069e61b -F file=@"$IMAGE_PATH" https://pixeldrain.com/api/file)
           FILE_ID=$(echo "$RESPONSE" | grep -oP '"id":"\K[^"]+')
           echo "link=https://pixeldrain.com/u/$FILE_ID" >> $GITHUB_OUTPUT
 
