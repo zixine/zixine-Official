@@ -1,4 +1,4 @@
-name: Build zixineKernelV2-SukiSUxSF
+name: Build zixineKernel-V2-SukiSUxSF
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      KERNEL_NAME: "zixineKernelV2-SukiSUxSF-V1"
+      KERNEL_NAME: "Zixine-SukiSUxSF-V2"
       
     steps:
       - name: Checkout Source Code
@@ -32,10 +32,11 @@ jobs:
           CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
           
           echo "Downloading Clang 19..."
-          curl -L "${CLANG_URL}" | tar -xz -C toolchain/clang          
+          curl -L "${CLANG_URL}" | tar -xz -C toolchain/clang
+          
       - name: Prepare & Configure Kernel
         run: |
-       # Set Path
+          # Set Path
           export PATH="$(pwd)/toolchain/clang/bin:$PATH"
           export ARCH=arm64
           export LLVM=1
@@ -45,7 +46,7 @@ jobs:
 
           # --- Custom Configs ---
           
-        # 1. Set Kernel Name
+          # 1. Set Kernel Name
           scripts/config --file out/.config --set-str LOCALVERSION "-${KERNEL_NAME}"
           
           # 2. Configure LTO
@@ -106,7 +107,7 @@ jobs:
           name: ${{ env.KERNEL_NAME }}-Image
           path: out/arch/arm64/boot/Image
           compression-level: 9
-# --- Custom Configs ---
+          # --- Custom Configs ---
           
           # 1. Set Kernel Name
           scripts/config --file out/.config --set-str LOCALVERSION "-${KERNEL_NAME}"
@@ -126,3 +127,6 @@ jobs:
           scripts/config --file out/.config \
               -e MQ_KYBER \
               --set-str DEFAULT_IOSCHED kyber
+              
+          # 7. Disable Certificate Signing (Sudah ada di template, biarkan)
+          
