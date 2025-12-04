@@ -1,0 +1,129 @@
+name: Build zixineKernelV2-SukiSUxSF
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      KERNEL_NAME: "zixineKernelV2-SukiSUxSF-V1"
+      
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install Dependencies
+        run: |
+          echo "Installing build dependencies..."
+          sudo apt-get update
+          # Ditambahkan: libelf-dev, zlib1g-dev, dwarves (fix error resolve_btfids)
+          sudo apt-get install -y build-essential bc bison flex libssl-dev git curl \
+          python3 python3-pip lld zip unzip libncurses5-dev \
+          libelf-dev zlib1g-dev dwarves
+
+      - name: Setup Toolchain (Clang 19)
+        run: |
+          mkdir -p toolchain/clang
+          CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
+          
+          echo "Downloading Clang 19..."
+          curl -L "${CLANG_URL}" | tar -xz -C toolchain/clang
+          
+      - name: Prepare & Configure Kernel
+        run: |
+       # Set Path
+          export PATH="$(pwd)/toolchain/clang/bin:$PATH"
+          export ARCH=arm64
+          export LLVM=1
+          
+          echo "Generating GKI defconfig..."
+          make O=out gki_defconfig
+
+          # --- Custom Configs ---
+          
+        # 1. Set Kernel Name
+          scripts/config --file out/.config --set-str LOCALVERSION "-${KERNEL_NAME}"
+          
+          # 2. Configure LTO
+          echo "Configuring LTO..."
+          scripts/config --file out/.config \
+              -e LTO_CLANG \
+              -d LTO_NONE \
+              -e LTO_CLANG_THIN \
+              -d LTO_CLANG_FULL \
+              -e THINLTO
+
+          # 3. Enable SukiSU KPM
+          echo "Enabling SukiSU KPM..."
+          scripts/config --file out/.config -e KPM
+
+          # 4. Disable Certificate Signing (Mencegah error keys)
+          echo "Disabling System Trusted Keys..."
+          scripts/config --file out/.config -d SYSTEM_TRUSTED_KEYS
+          scripts/config --file out/.config -d SYSTEM_REVOCATION_KEYS
+
+      - name: Build Kernel Image
+        run: |
+          export PATH="$(pwd)/toolchain/clang/bin:$PATH"
+          export ARCH=arm64
+          export LLVM=1
+          
+          echo "Starting Build..."
+          make -j"$(nproc --all)" O=out Image
+
+      - name: Apply SukiSU Patch
+        run: |
+          cd out/arch/arm64/boot
+          
+          echo "Downloading SukiSU Patcher..."
+          curl -LSs "https://github.com/SukiSU-Ultra/SukiSU_patch/raw/refs/heads/main/kpm/patch_linux" -o patch
+          chmod 777 patch
+          
+          echo "Running Patch..."
+          ./patch
+          
+          # Rename 'oImage' kembali menjadi 'Image'
+          if [ -f oImage ]; then
+            echo "Patch success! Renaming oImage to Image..."
+            mv -f oImage Image
+          else
+            echo "WARNING: oImage not found. Check if patch failed."
+          fi
+          
+          ls -lh Image
+
+      - name: Check Kernel Version Name
+        run: |
+          strings out/arch/arm64/boot/Image | grep "Linux version" | head -n 1
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.KERNEL_NAME }}-Image
+          path: out/arch/arm64/boot/Image
+          compression-level: 9
+# --- Custom Configs ---
+          
+          # 1. Set Kernel Name
+          scripts/config --file out/.config --set-str LOCALVERSION "-${KERNEL_NAME}"
+          
+          # 2. Configure LTO (Sudah ada di template, biarkan)
+          
+          # 3. Enable SukiSU KPM (Sudah ada di template, biarkan)
+          
+          # 4. Tweak CPU Governor (Performance)
+          echo "Setting Performance Governor..."
+          scripts/config --file out/.config \
+              -e CPU_FREQ_GOV_PERFORMANCE \
+              --set-str CPU_FREQ_DEFAULT_GOV performance
+
+          # 5. Tweak I/O Scheduler (Kyber)
+          echo "Setting Kyber I/O Scheduler..."
+          scripts/config --file out/.config \
+              -e MQ_KYBER \
+              --set-str DEFAULT_IOSCHED kyber
