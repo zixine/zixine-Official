@@ -6,7 +6,7 @@ on:
       DEFCONFIG_NAME:
         description: 'Defconfig name (e.g., vendor/lito_defconfig atau gki_defconfig)'
         required: true
-        default: 'gki_defconfig' # Default ke gki_defconfig jika tidak diisi
+        default: 'gki_defconfig' 
 
 jobs:
   build:
@@ -22,22 +22,22 @@ jobs:
           submodules: recursive
           fetch-depth: 1
 
-      # --- START: NEW STEP FOR XIAOMI HACK ---
-      - name: Apply Xiaomi DRM/Flicker Fix
+      # --- START: PERBAIKAN PATH DI SINI ---
+      - name: Apply Xiaomi DRM/Flicker Fix (Path Corrected)
         run: |
           echo "Applying DRM compatibility patches for Xiaomi devices (Garnet/Marble fix)..."
           
           # 1. Hapus cek versi simbol di kernel/module.c
-          # Ini mencegah error saat modul pihak ketiga (seperti KSU) dimuat.
-          sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
+          # PATH DIPERBAIKI: common/kernel/module.c
+          sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' common/kernel/module.c
           
           # 2. Hapus cek valid clones di drivers/gpu/drm/drm_atomic_helper.c
-          # Ini mengatasi masalah flicker/bootloop terkait DRM/GPU driver.
-          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
-          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
+          # PATH DIPERBAIKI: common/drivers/gpu/drm/drm_atomic_helper.c
+          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' common/drivers/gpu/drm/drm_atomic_helper.c
+          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' common/drivers/gpu/drm/drm_atomic_helper.c
           
           echo "Xiaomi DRM fixes applied successfully."
-      # --- END: NEW STEP FOR XIAOMI HACK ---
+      # --- END: PERBAIKAN PATH DI SINI ---
 
       - name: Install Dependencies
         run: |
@@ -70,31 +70,18 @@ jobs:
           export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
           echo "Generating defconfig: ${{ inputs.DEFCONFIG_NAME }}"
+          # Defconfig harus dijalankan dari root direktori (di mana folder 'common' berada)
           make O=out ${{ inputs.DEFCONFIG_NAME }}
 
           # --- Custom Configs (Tweak Performa) ---
           if [ -f out/.config ]; then
             echo "Applying Custom Configs and Performance Tweaks..."
             
-            # 1. Set Kernel Name
+            # ... (Tweak konfigurasi lainnya)
             scripts/config --file out/.config --set-str LOCALVERSION "-${KERNEL_NAME}"
-            
-            # 2. Configure LTO
-            scripts/config --file out/.config \
-                -e LTO_CLANG \
-                -d LTO_NONE \
-                -e LTO_CLANG_THIN \
-                -d LTO_CLANG_FULL \
-                -e THINLTO
-
-            # 3. Enable SukiSU KPM
+            scripts/config --file out/.config -e LTO_CLANG -d LTO_NONE -e LTO_CLANG_THIN -d LTO_CLANG_FULL -e THINLTO
             scripts/config --file out/.config -e KPM
-
-            # 4. Disable Certificate Signing
-            scripts/config --file out/.config -d SYSTEM_TRUSTED_KEYS
-            scripts/config --file out/.config -d SYSTEM_REVOCATION_KEYS
-            
-            # --- TWEAKS BARU (Kyber, BBR, HZ 300) ---
+            scripts/config --file out/.config -d SYSTEM_TRUSTED_KEYS -d SYSTEM_REVOCATION_KEYS
             
             # 5. I/O Scheduler: Kyber
             echo "-> Enabling Kyber I/O Scheduler..."
@@ -106,10 +93,7 @@ jobs:
                                              
             # 7. Networking Tweaks: BBR dan TCP Fastopen
             echo "-> Enabling BBR TCP Congestion Control and TCP Net Tweak..."
-            scripts/config --file out/.config -e TCP_CONG_BBR \
-                                             -e TCP_FASTOPEN \
-                                             -e TCP_CONG_ADVANCED \
-                                             --set-str DEFAULT_TCP_CONG "bbr"
+            scripts/config --file out/.config -e TCP_CONG_BBR -e TCP_FASTOPEN -e TCP_CONG_ADVANCED --set-str DEFAULT_TCP_CONG "bbr"
             
             # Simpan perubahan konfigurasi
             make O=out savedefconfig
@@ -147,7 +131,6 @@ jobs:
           echo "Running Patch..."
           ./patch
           
-          # Rename 'oImage' kembali menjadi 'Image'
           if [ -f oImage ]; then
             echo "Patch success! Renaming oImage to Image..."
             mv -f oImage Image
