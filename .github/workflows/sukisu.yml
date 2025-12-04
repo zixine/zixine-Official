@@ -8,7 +8,7 @@ env:
   PATCH_DIR: ${{ github.workspace }}/gki/SukiSU_patch
   COMMON_DIR: ${{ github.workspace }}/gki/common
   DEFCONFIG: arch/arm64/configs/gki_defconfig
-  BRAND: "-GotenX-SukiSU-Ultra"
+  BRAND: "-zixineV2-SukiSU-Ultra"
 
 jobs:
   build:
@@ -149,6 +149,14 @@ jobs:
             echo "CONFIG_TCP_CONG_WESTWOOD=n"
             echo "CONFIG_TCP_CONG_HTCP=n"
             echo "CONFIG_DEFAULT_BBR=y"
+            echo "# Set Tick Timer Freq to 300 HZ"
+            echo "CONFIG_HZ_300=y"
+            echo "CONFIG_HZ=300"
+            echo "CONFIG_NO_HZ_IDLE=y"
+            echo "CONFIG_HZ_100=n"
+            echo "CONFIG_HZ_250=n"
+            echo "CONFIG_HZ_1000=n"
+            echo "CONFIG_HZ_1200=n"
           } >> "$DEFCONFIG_FILE"
           echo "[✓] Config Configured"
 
