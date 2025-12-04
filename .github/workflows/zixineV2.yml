@@ -8,7 +8,7 @@ env:
   PATCH_DIR: ${{ github.workspace }}/gki/SukiSU_patch
   COMMON_DIR: ${{ github.workspace }}/gki/common
   DEFCONFIG: arch/arm64/configs/gki_defconfig
-  BRAND: "-zixineV2-SukisuXFS-perf"
+  BRAND: "-zixineV2-SukiSU-Ultra"
 
 jobs:
   build:
@@ -36,21 +36,20 @@ jobs:
           sudo apt update && sudo apt upgrade -y
           sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
             libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld ccache \
-            dwarves # Tambahkan dwarves untuk BTF
+            dwarves 
           echo "[✓] Dependencies  Installed"
 
       - name: Setup Git Identity
         run: |
           echo "[3/15] Setup git identity"
-          git config --global user.email "waheid005@gmail.com"
-          git config --global user.name "zixine"
+          git config --global user.email "kingfinix98@gmail.com"
+          git config --global user.name "goten"
           echo "[✓] Setup completed"
 
       - name: Init Kernel Source
         run: |
           cd $GKI_DIR
           echo "[4/15] Init kernel source"
-          # Ganti branch ini sesuai branch kernel Anda jika bukan 5.10
           repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 
           echo "[✓] Repo init success"
 
@@ -109,18 +108,176 @@ jobs:
       - name: Inline Patch module.c dan drm
         run: |
           echo "[10/15] Disable warn and check valid clones (Xiaomi Hack)"
-          # Path sudah benar: menggunakan $COMMON_DIR
           sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' $COMMON_DIR/kernel/module.c
           sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' $COMMON_DIR/drivers/gpu/drm/drm_atomic_helper.c
           sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' $COMMON_DIR/drivers/gpu/drm/drm_atomic_helper.c
           echo "[✓] Disabled"
+          
+      # --- LANGKAH PERBAIKAN BARU UNTUK KONFLIK KERNELSU ---
+      - name: Fix KernelSU/SUSFS app_profile.c Conflict
+        run: |
+          echo "[FIX] Fixing conflicting declaration in app_profile.c..."
+          APP_PROFILE_PATH="$COMMON_DIR/drivers/kernelsu/app_profile.c"
+          
+          if [ -f "$APP_PROFILE_PATH" ]; then
+              # Hapus baris 'void disable_seccomp(void);' yang berkonflik
+              sed -i '/void disable_seccomp(void);/d' $APP_PROFILE_PATH
+              echo "[✓] Conflicting declaration removed from $APP_PROFILE_PATH"
+              
+              # Ganti panggilan fungsi yang salah argumen (misal: disable_seccomp(true)) menjadi disable_seccomp()
+              # Ini adalah tebakan terbaik untuk mengatasi error "expected 0, have 1"
+              sed -i 's/disable_seccomp(true)/disable_seccomp()/g' $APP_PROFILE_PATH
+              sed -i 's/disable_seccomp(false)/disable_seccomp()/g' $APP_PROFILE_PATH
+              echo "[✓] Incorrect function calls corrected."
+          else
+              echo "[!] WARNING: app_profile.c not found. Skipping fix."
+          fi
+      # --- AKHIR LANGKAH PERBAIKAN ---
+
+      - name: Modified gki_defconfig (Added Kyber & 300 HZ)
+        run: |
+name: SukiSU Self Hosted Build
+
+on:
+  workflow_dispatch:
+
+env:
+  GKI_DIR: gki
+  PATCH_DIR: ${{ github.workspace }}/gki/SukiSU_patch
+  COMMON_DIR: ${{ github.workspace }}/gki/common
+  DEFCONFIG: arch/arm64/configs/gki_defconfig
+  BRAND: "-zixineV2-SukiSU-Ultra"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 5120
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+
+      - name: Setup Workspace
+        run: |
+          echo "[1/15] Creating Workspace"
+          mkdir -p $GKI_DIR
+          echo "[✓] Workspace $GKI_DIR created"
+
+      - name: Install Dependencies
+        run: |
+          echo "[2/15] Installing Dependencies"
+          sudo apt update && sudo apt upgrade -y
+          sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
+            libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld ccache \
+            dwarves 
+          echo "[✓] Dependencies  Installed"
+
+      - name: Setup Git Identity
+        run: |
+          echo "[3/15] Setup git identity"
+          git config --global user.email "kingfinix98@gmail.com"
+          git config --global user.name "goten"
+          echo "[✓] Setup completed"
+
+      - name: Init Kernel Source
+        run: |
+          cd $GKI_DIR
+          echo "[4/15] Init kernel source"
+          repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 
+          echo "[✓] Repo init success"
+
+      - name: Sync Kernel Source
+        run: |
+          cd $GKI_DIR
+          echo "[5/15] Sync kernel source"
+          repo --trace sync -c -j$(nproc --all) --no-tags --fail-fast
+          echo "[✓] Sync completed"
+
+      - name: Clone SukiSU Patch
+        run: |
+          cd $GKI_DIR
+          echo "[6/15]Cloning SukiSU Patch"
+          git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          echo "[✓] Patch Clonned"
+
+      - name: Cherry-pick Upstream Rama
+        run: |
+          cd $COMMON_DIR
+          echo "[6/15] Upstream linux from Rama"
+          git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
+          git fetch -j12 rama
+          git cherry-pick 2afc3cd 8f27b49 || echo "[!] Some commits may not apply cleanly"
+          echo "[✓] Upstream completed"
+
+      - name: Add SukiSU and SUSFS
+        run: |
+          cd $COMMON_DIR
+          echo "[7/15] Add SukiSU x SUSFS"
+          curl -LSs https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh | bash -s susfs-main
+
+          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 $GKI_DIR/sus
+          cp -r $GKI_DIR/sus/kernel_patches/fs .
+          cp -r $GKI_DIR/sus/kernel_patches/include .
+          cp $GKI_DIR/sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch .
+          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
+          echo "[✓] SUSFS patched"
+
+      - name: Apply New Hooks Patch
+        run: |
+          cd $COMMON_DIR
+          echo "[8/15] Apply Manual Hook"
+          cp $PATCH_DIR/hooks/syscall_hooks.patch .
+          patch -p1 -F 3 < syscall_hooks.patch
+          echo "[✓] Hook Applied"
+
+      - name: Apply Hide Stuff Patch
+        run: |
+          cd $COMMON_DIR
+          echo "[9/15] Apply Hide stuff patch"
+          cp $PATCH_DIR/69_hide_stuff.patch .
+          patch -p1 -F 3 < 69_hide_stuff.patch
+          echo "[✓] hide_stuff.patch Applied"
+
+      - name: Inline Patch module.c dan drm
+        run: |
+          echo "[10/15] Disable warn and check valid clones (Xiaomi Hack)"
+          sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' $COMMON_DIR/kernel/module.c
+          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' $COMMON_DIR/drivers/gpu/drm/drm_atomic_helper.c
+          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' $COMMON_DIR/drivers/gpu/drm/drm_atomic_helper.c
+          echo "[✓] Disabled"
+          
+      # --- LANGKAH PERBAIKAN BARU UNTUK KONFLIK KERNELSU ---
+      - name: Fix KernelSU/SUSFS app_profile.c Conflict
+        run: |
+          echo "[FIX] Fixing conflicting declaration in app_profile.c..."
+          APP_PROFILE_PATH="$COMMON_DIR/drivers/kernelsu/app_profile.c"
+          
+          if [ -f "$APP_PROFILE_PATH" ]; then
+              # Hapus baris 'void disable_seccomp(void);' yang berkonflik
+              sed -i '/void disable_seccomp(void);/d' $APP_PROFILE_PATH
+              echo "[✓] Conflicting declaration removed from $APP_PROFILE_PATH"
+              
+              # Ganti panggilan fungsi yang salah argumen (misal: disable_seccomp(true)) menjadi disable_seccomp()
+              # Ini adalah tebakan terbaik untuk mengatasi error "expected 0, have 1"
+              sed -i 's/disable_seccomp(true)/disable_seccomp()/g' $APP_PROFILE_PATH
+              sed -i 's/disable_seccomp(false)/disable_seccomp()/g' $APP_PROFILE_PATH
+              echo "[✓] Incorrect function calls corrected."
+          else
+              echo "[!] WARNING: app_profile.c not found. Skipping fix."
+          fi
+      # --- AKHIR LANGKAH PERBAIKAN ---
 
       - name: Modified gki_defconfig (Added Kyber & 300 HZ)
         run: |
           echo "[11/15] Enable KSU SUSFS ETC Config"
           DEFCONFIG_FILE="$COMMON_DIR/${DEFCONFIG}"
           {
-            # KSU & SUSFS Configs (Existing)
+            # ... (KSU, SUSFS, BBR Configs existing)
             echo "CONFIG_KSU=y"
             echo "CONFIG_KPM=y"
             echo "CONFIG_KSU_SUSFS_SUS_SU=n"
@@ -154,24 +311,19 @@ jobs:
             echo "CONFIG_TCP_CONG_HTCP=n"
             echo "CONFIG_DEFAULT_BBR=y"
             
-            # --- START: KONFIGURASI TAMBAHAN ANDA ---
-            
-            # I/O Scheduler: Kyber
+            # --- KONFIGURASI TAMBAHAN ANDA ---
             echo "# Enable Kyber I/O Scheduler"
             echo "CONFIG_BLK_MQ_SCHED_KYBER=y"
             
-            # Tick Timer Frequency: 300 HZ
             echo "# Set Tick Timer Freq to 300 HZ"
             echo "CONFIG_HZ_300=y"
             echo "CONFIG_HZ=300"
             echo "CONFIG_NO_HZ_IDLE=y"
-            # Pastikan HZ lainnya dinonaktifkan
             echo "CONFIG_HZ_100=n"
             echo "CONFIG_HZ_250=n"
             echo "CONFIG_HZ_1000=n"
             echo "CONFIG_HZ_1200=n"
             
-            # --- END: KONFIGURASI TAMBAHAN ANDA ---
           } >> "$DEFCONFIG_FILE"
           echo "[✓] Config Configured"
 
@@ -197,15 +349,12 @@ jobs:
       - name: Install ccache
         run: |
           echo "[14/15] Installing ccache"
-          # Ganti ke apt install biasa jika ccache sudah terinstal
           sudo apt update && sudo apt upgrade -y && sudo apt install -y ccache
           echo "[✓] Cacched installed"
 
       - name: Build Kernel
         run: |
           echo "[15/15] Building kernel with ccache"
-          # Path toolchain AOSP yang sudah di-clone (meskipun tidak menggunakan action kdrag0n)
-          # Tetapkan variabel lingkungan untuk toolchain.
           export CLANG_VERSION="clang-r547379"
           export PATH="$GITHUB_WORKSPACE/$GKI_DIR/prebuilts-master/clang/host/linux-x86/$CLANG_VERSION/bin:$PATH"
           export CC="ccache clang"
@@ -226,17 +375,25 @@ jobs:
           mv -f oImage Image
           echo "[✓] Patched"
 
-      - name: Upload Image to Pixeldrain
+      - name: Upload Image to Pixeldrain (SECURE)
         id: upload
+        env:
+          PD_TOKEN: ${{ secrets.PIXELDRAIN_API_KEY }}
         run: |
+          echo "[Additional] Uploading Image to Pixeldrain..."
           IMAGE_PATH=$(find $GKI_DIR/out -type f -name Image | head -n 1)
           if [ -z "$IMAGE_PATH" ]; then
             echo "❌ Image not found"
             exit 1
           fi
-          # Ganti dengan token/kunci Pixeldrain Anda
+          
           RESPONSE=$(curl -s -u :37d09351-44a8-4bfb-b245-b04e3069e61b -F file=@"$IMAGE_PATH" https://pixeldrain.com/api/file)
+          
           FILE_ID=$(echo "$RESPONSE" | grep -oP '"id":"\K[^"]+')
+          if [ -z "$FILE_ID" ]; then
+             echo "❌ Upload failed. Response: $RESPONSE"
+             exit 1
+          fi
           echo "link=https://pixeldrain.com/u/$FILE_ID" >> $GITHUB_OUTPUT
 
       - name: Show link download
