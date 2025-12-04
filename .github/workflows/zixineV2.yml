@@ -107,26 +107,4 @@ jobs:
           name: ${{ env.KERNEL_NAME }}-Image
           path: out/arch/arm64/boot/Image
           compression-level: 9
-          # --- Custom Configs ---
-          
-          # 1. Set Kernel Name
-          scripts/config --file out/.config --set-str LOCALVERSION "-${KERNEL_NAME}"
-          
-          # 2. Configure LTO (Sudah ada di template, biarkan)
-          
-          # 3. Enable SukiSU KPM (Sudah ada di template, biarkan)
-          
-          # 4. Tweak CPU Governor (Performance)
-          echo "Setting Performance Governor..."
-          scripts/config --file out/.config \
-              -e CPU_FREQ_GOV_PERFORMANCE \
-              --set-str CPU_FREQ_DEFAULT_GOV performance
-
-          # 5. Tweak I/O Scheduler (Kyber)
-          echo "Setting Kyber I/O Scheduler..."
-          scripts/config --file out/.config \
-              -e MQ_KYBER \
-              --set-str DEFAULT_IOSCHED kyber
-              
-          # 7. Disable Certificate Signing (Sudah ada di template, biarkan)
           
