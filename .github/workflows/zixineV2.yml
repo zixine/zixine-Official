@@ -1,161 +1,245 @@
-name: Build zixineKernel-V2-SukiSUxSF
+name: SukiSU Self Hosted Build
 
 on:
   workflow_dispatch:
-    inputs:
-      DEFCONFIG_NAME:
-        description: 'Defconfig name (e.g., vendor/lito_defconfig atau arch/arm64/configs/gki_defconfig)'
-        required: true
-        default: 'arch/arm64/configs/gki_defconfig' # Default diubah ke path penuh
+
+env:
+  GKI_DIR: gki
+  PATCH_DIR: ${{ github.workspace }}/gki/SukiSU_patch
+  COMMON_DIR: ${{ github.workspace }}/gki/common
+  DEFCONFIG: arch/arm64/configs/gki_defconfig
+  BRAND: "-zixineV2-SukisuXFS-perf"
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
-    env:
-      KERNEL_NAME: "Zixine-SukiSUxSF-V2"
-      
     steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
+      - name: Maximize build space
+        uses: easimon/maximize-build-space@master
         with:
-          submodules: recursive
-          fetch-depth: 1
-      
-      # --- LANGKAH PENTING BARU: Force Submodule/GKI Sync ---
-      - name: Force GKI Submodule Initialization (Crucial Fix)
-        run: |
-          echo "Ensuring all submodules and GKI directories are present..."
-          # Perintah ini akan memastikan submodul ditarik, termasuk folder 'common' jika itu submodul.
-          git submodule update --init --recursive || true
-          # Jika Anda menggunakan manifest/repo, Anda mungkin perlu perintah repo init/sync di sini.
-          # Asumsi: kernel source GKI berada di folder 'common' setelah checkout.
-          
-          # Cek keberadaan file sebelum patching
-          if [ ! -f "common/kernel/module.c" ]; then
-              echo "ERROR: common/kernel/module.c TIDAK DITEMUKAN. Periksa struktur repositori Anda."
-              # Jika ini GKI Manifest, Anda mungkin perlu langkah 'repo sync' di sini.
-              exit 1
-          fi
+          root-reserve-mb: 5120
+          swap-size-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
 
-      - name: Apply Xiaomi DRM/Flicker Fix (Final Check)
+      - name: Setup Workspace
         run: |
-          echo "Applying DRM compatibility patches for Xiaomi devices (Garnet/Marble fix)..."
-          
-          # 1. Hapus cek versi simbol di common/kernel/module.c
-          sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' common/kernel/module.c
-          
-          # 2. Hapus cek valid clones di common/drivers/gpu/drm/drm_atomic_helper.c
-          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' common/drivers/gpu/drm/drm_atomic_helper.c
-          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' common/drivers/gpu/drm/drm_atomic_helper.c
-          
-          echo "Xiaomi DRM fixes applied successfully."
+          echo "[1/15] Creating Workspace"
+          mkdir -p $GKI_DIR
+          echo "[✓] Workspace $GKI_DIR created"
 
       - name: Install Dependencies
-        # (Tetap sama)
         run: |
-          echo "Installing build dependencies..."
-          sudo apt-get update
-          sudo apt-get install -y build-essential bc bison flex libssl-dev git curl \
-          python3 python3-pip lld zip unzip libncurses5-dev \
-          libelf-dev zlib1g-dev dwarves
+          echo "[2/15] Installing Dependencies"
+          sudo apt update && sudo apt upgrade -y
+          sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
+            libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld ccache \
+            dwarves # Tambahkan dwarves untuk BTF
+          echo "[✓] Dependencies  Installed"
 
-      - name: Setup Toolchain (Clang 20)
-        # (Tetap sama)
+      - name: Setup Git Identity
         run: |
-          TOOLCHAIN_DIR="$(pwd)/toolchain"
-          mkdir -p "$TOOLCHAIN_DIR/clang"
-          CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
-          
-          echo "Downloading Clang 20..."
-          curl -L "${CLANG_URL}" | tar -xz -C "$TOOLCHAIN_DIR/clang"
-          
-          echo "TOOLCHAIN_DIR=$TOOLCHAIN_DIR" >> $GITHUB_ENV
-          echo "CLANG_DIR=$TOOLCHAIN_DIR/clang" >> $GITHUB_ENV
-          echo "PATH=$TOOLCHAIN_DIR/clang/bin:$PATH" >> $GITHUB_ENV
+          echo "[3/15] Setup git identity"
+          git config --global user.email "kingfinix98@gmail.com"
+          git config --global user.name "goten"
+          echo "[✓] Setup completed"
 
-      - name: Prepare & Configure Kernel (Defconfig & Tweaks)
+      - name: Init Kernel Source
         run: |
-          # VARIABEL LINGKUNGAN WAJIB UNTUK LLVM/CLANG
-          export ARCH=arm64
-          export LLVM=1
-          export CLANG_TRIPLE=aarch64-linux-gnu- 
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          cd $GKI_DIR
+          echo "[4/15] Init kernel source"
+          # Ganti branch ini sesuai branch kernel Anda jika bukan 5.10
+          repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 
+          echo "[✓] Repo init success"
 
-          echo "Generating defconfig: ${{ inputs.DEFCONFIG_NAME }}"
-          # Defconfig menggunakan O=out
-          make O=out ${{ inputs.DEFCONFIG_NAME }}
+      - name: Sync Kernel Source
+        run: |
+          cd $GKI_DIR
+          echo "[5/15] Sync kernel source"
+          repo --trace sync -c -j$(nproc --all) --no-tags --fail-fast
+          echo "[✓] Sync completed"
 
-          # --- Custom Configs (Tweak Performa) ---
-          if [ -f out/.config ]; then
-            echo "Applying Custom Configs and Performance Tweaks..."
+      - name: Clone SukiSU Patch
+        run: |
+          cd $GKI_DIR
+          echo "[6/15]Cloning SukiSU Patch"
+          git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          echo "[✓] Patch Clonned"
+
+      - name: Cherry-pick Upstream Rama
+        run: |
+          cd $COMMON_DIR
+          echo "[6/15] Upstream linux from Rama"
+          git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
+          git fetch -j12 rama
+          git cherry-pick 2afc3cd 8f27b49 || echo "[!] Some commits may not apply cleanly"
+          echo "[✓] Upstream completed"
+
+      - name: Add SukiSU and SUSFS
+        run: |
+          cd $COMMON_DIR
+          echo "[7/15] Add SukiSU x SUSFS"
+          curl -LSs https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh | bash -s susfs-main
+
+          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 $GKI_DIR/sus
+          cp -r $GKI_DIR/sus/kernel_patches/fs .
+          cp -r $GKI_DIR/sus/kernel_patches/include .
+          cp $GKI_DIR/sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch .
+          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
+          echo "[✓] SUSFS patched"
+
+      - name: Apply New Hooks Patch
+        run: |
+          cd $COMMON_DIR
+          echo "[8/15] Apply Manual Hook"
+          cp $PATCH_DIR/hooks/syscall_hooks.patch .
+          patch -p1 -F 3 < syscall_hooks.patch
+          echo "[✓] Hook Applied"
+
+      - name: Apply Hide Stuff Patch
+        run: |
+          cd $COMMON_DIR
+          echo "[9/15] Apply Hide stuff patch"
+          cp $PATCH_DIR/69_hide_stuff.patch .
+          patch -p1 -F 3 < 69_hide_stuff.patch
+          echo "[✓] hide_stuff.patch Applied"
+
+      - name: Inline Patch module.c dan drm
+        run: |
+          echo "[10/15] Disable warn and check valid clones (Xiaomi Hack)"
+          # Path sudah benar: menggunakan $COMMON_DIR
+          sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' $COMMON_DIR/kernel/module.c
+          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' $COMMON_DIR/drivers/gpu/drm/drm_atomic_helper.c
+          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' $COMMON_DIR/drivers/gpu/drm/drm_atomic_helper.c
+          echo "[✓] Disabled"
+
+      - name: Modified gki_defconfig (Added Kyber & 300 HZ)
+        run: |
+          echo "[11/15] Enable KSU SUSFS ETC Config"
+          DEFCONFIG_FILE="$COMMON_DIR/${DEFCONFIG}"
+          {
+            # KSU & SUSFS Configs (Existing)
+            echo "CONFIG_KSU=y"
+            echo "CONFIG_KPM=y"
+            echo "CONFIG_KSU_SUSFS_SUS_SU=n"
+            echo "CONFIG_KSU_MANUAL_HOOK=y"
+            echo "CONFIG_KSU_KPROBES_HOOK=n"
+            echo "CONFIG_KSU_SUSFS=y"
+            echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
+            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+            echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n"
+            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
+            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+            echo "CONFIG_TMPFS_XATTR=y"
+            echo "CONFIG_TMPFS_POSIX_ACL=y"
+            echo "CONFIG_IP_NF_TARGET_TTL=y"
+            echo "CONFIG_IP6_NF_TARGET_HL=y"
+            echo "CONFIG_IP6_NF_MATCH_HL=y"
+            echo "CONFIG_TCP_CONG_ADVANCED=y"
+            echo "CONFIG_TCP_CONG_BBR=y"
+            echo "CONFIG_NET_SCH_FQ=y"
+            echo "CONFIG_TCP_CONG_BIC=n"
+            echo "CONFIG_TCP_CONG_WESTWOOD=n"
+            echo "CONFIG_TCP_CONG_HTCP=n"
+            echo "CONFIG_DEFAULT_BBR=y"
             
-            # ... (Semua tweaks konfigurasi yang diminta: Kyber, BBR, HZ 300)
-            scripts/config --file out/.config --set-str LOCALVERSION "-${KERNEL_NAME}"
-            scripts/config --file out/.config -e LTO_CLANG -d LTO_NONE -e LTO_CLANG_THIN -d LTO_CLANG_FULL -e THINLTO
-            scripts/config --file out/.config -e KPM
-            scripts/config --file out/.config -d SYSTEM_TRUSTED_KEYS -d SYSTEM_REVOCATION_KEYS
-            scripts/config --file out/.config -e BLK_MQ_SCHED_KYBER
-            scripts/config --file out/.config -d HZ_100 -d HZ_250 -d HZ_1000 -d HZ_1200 -e HZ_300
-            scripts/config --file out/.config -e TCP_CONG_BBR -e TCP_FASTOPEN -e TCP_CONG_ADVANCED --set-str DEFAULT_TCP_CONG "bbr"
+            # --- START: KONFIGURASI TAMBAHAN ANDA ---
             
-            # Simpan perubahan konfigurasi
-            make O=out savedefconfig
-            mv out/defconfig out/.config
-          else
-             echo "ERROR: Defconfig creation failed. Check the name: ${{ inputs.DEFCONFIG_NAME }}"
-             exit 1 
-          fi
+            # I/O Scheduler: Kyber
+            echo "# Enable Kyber I/O Scheduler"
+            echo "CONFIG_BLK_MQ_SCHED_KYBER=y"
+            
+            # Tick Timer Frequency: 300 HZ
+            echo "# Set Tick Timer Freq to 300 HZ"
+            echo "CONFIG_HZ_300=y"
+            echo "CONFIG_HZ=300"
+            echo "CONFIG_NO_HZ_IDLE=y"
+            # Pastikan HZ lainnya dinonaktifkan
+            echo "CONFIG_HZ_100=n"
+            echo "CONFIG_HZ_250=n"
+            echo "CONFIG_HZ_1000=n"
+            echo "CONFIG_HZ_1200=n"
+            
+            # --- END: KONFIGURASI TAMBAHAN ANDA ---
+          } >> "$DEFCONFIG_FILE"
+          echo "[✓] Config Configured"
 
-
-      - name: Build Kernel Image
-        # (Tetap sama)
+      - name: Disable check_defconfig
         run: |
-          export ARCH=arm64
-          export LLVM=1
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          echo "[12/15] Disable Check Defconfig"
+          sed -i 's/check_defconfig//' $COMMON_DIR/build.config.gki
+          echo "[✓] Disabled"
 
-          echo "Starting Build..."
-          make -j"$(nproc --all)" O=out Image \
-          LLVM=1 \
-          CLANG_TRIPLE=aarch64-linux-gnu- \
-          CROSS_COMPILE=aarch64-linux-gnu- \
-          CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-          LD=ld.lld
-
-      - name: Apply SukiSU Patch
-        # (Tetap sama)
+      - name: Set Kernel Name and Branding
         run: |
-          cd out/arch/arm64/boot
-          
-          echo "Downloading SukiSU Patcher..."
-          curl -LSs "https://github.com/SukiSU-Ultra/SukiSU_patch/raw/refs/heads/main/kpm/patch_linux" -o patch
+          cd gki
+          echo "[13/15] Set Kernel Brand"
+          echo "echo \"$BRAND\"" > ./common/scripts/setlocalversion
+          chmod +x ./common/scripts/setlocalversion
+
+          DEFCONFIG2="./common/arch/arm64/configs/gki_defconfig"
+          sed -i '/^CONFIG_LOCALVERSION=/d' "$DEFCONFIG2"
+          echo "CONFIG_LOCALVERSION=\"$BRAND\"" >> "$DEFCONFIG2"
+          echo "CONFIG_LOCALVERSION_AUTO=n" >> "$DEFCONFIG2"
+          echo "[✓] Completed"
+
+      - name: Install ccache
+        run: |
+          echo "[14/15] Installing ccache"
+          # Ganti ke apt install biasa jika ccache sudah terinstal
+          sudo apt update && sudo apt upgrade -y && sudo apt install -y ccache
+          echo "[✓] Cacched installed"
+
+      - name: Build Kernel
+        run: |
+          echo "[15/15] Building kernel with ccache"
+          # Path toolchain AOSP yang sudah di-clone (meskipun tidak menggunakan action kdrag0n)
+          # Tetapkan variabel lingkungan untuk toolchain.
+          export CLANG_VERSION="clang-r547379"
+          export PATH="$GITHUB_WORKSPACE/$GKI_DIR/prebuilts-master/clang/host/linux-x86/$CLANG_VERSION/bin:$PATH"
+          export CC="ccache clang"
+          export USE_CCACHE=1
+          ccache -M 5G
+
+          cd $GKI_DIR
+          KBUILD_BUILD_USER=goten KBUILD_BUILD_HOST=aetherium LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh -j$(nproc)
+          echo "[✓] Kernel build with status Success"
+
+      - name: Patch Image
+        run: |
+          echo "[Additional] Pathcing KPM"
+          cd $GKI_DIR/out/android12-5.10/common/arch/arm64/boot
+          curl -LSs https://raw.githubusercontent.com/ShirkNeko/SukiSU_patch/main/kpm/patch_linux -o patch
           chmod 777 patch
-          
-          echo "Running Patch..."
           ./patch
-          
-          if [ -f oImage ]; then
-            echo "Patch success! Renaming oImage to Image..."
-            mv -f oImage Image
-          else
-            echo "WARNING: oImage not found. Check if patch failed."
-          fi
-          
-          ls -lh Image
+          mv -f oImage Image
+          echo "[✓] Patched"
 
-      - name: Check Kernel Version Name
-        # (Tetap sama)
+      - name: Upload Image to Pixeldrain
+        id: upload
         run: |
-          strings out/arch/arm64/boot/Image | grep "Linux version" | head -n 1
+          IMAGE_PATH=$(find $GKI_DIR/out -type f -name Image | head -n 1)
+          if [ -z "$IMAGE_PATH" ]; then
+            echo "❌ Image not found"
+            exit 1
+          fi
+          # Ganti dengan token/kunci Pixeldrain Anda
+          RESPONSE=$(curl -s -u :53bc8bf8-584d-444e-97e3-715a1b3526bf -F file=@"$IMAGE_PATH" https://pixeldrain.com/api/file)
+          FILE_ID=$(echo "$RESPONSE" | grep -oP '"id":"\K[^"]+')
+          echo "link=https://pixeldrain.com/u/$FILE_ID" >> $GITHUB_OUTPUT
 
-      - name: Upload Artifact
-        # (Tetap sama)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.KERNEL_NAME }}-Image
-          path: out/arch/arm64/boot/Image
-          compression-level: 9
+      - name: Show link download
+        run: |
+          echo "🎉 Build Finished!"
+          echo "🔗 Link Image: ${{ steps.upload.outputs.link }}"
