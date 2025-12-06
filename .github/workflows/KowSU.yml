@@ -188,7 +188,7 @@ jobs:
             echo "Using custom kernel name: ${{ github.event.inputs.kernel_name }}"
             BRAND="-${{ github.event.inputs.kernel_name }}"
           else
-            BRAND=""
+            BRAND="-zixineKernelX-KowSU-V2"
           fi
           
           # FIX: Paksa script setlocalversion untuk HANYA output brand kita
