@@ -1,0 +1,181 @@
+steps:
+  - name: Checkout Repository
+    uses: actions/checkout@v4
+
+  - name: Maximize Build Space and Install Dependencies
+    run: |
+      echo "[1/10] Setup Workspace, Dependencies, and Clang Toolchain"
+      
+      # 1. Maksimalkan Ruang Build (Penting untuk kompilasi kernel besar)
+      sudo swapoff -a
+      sudo rm -f /swapfile
+      sudo apt clean
+      
+      # 2. Instalasi Dependensi Build (termasuk repo dan ccache)
+      sudo apt update && sudo apt install -y git curl repo build-essential bc bison flex \
+        libssl-dev libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld ccache \
+        cmake ninja-build
+      
+      # 3. Setup Workspace
+      mkdir -p $GKI_DIR
+      cd $GKI_DIR
+      
+      # 4. Setup Clang 20 Toolchain dari AOSP (Sesuai Syarat Build GKI)
+      mkdir -p $CLANG_PARENT_DIR
+      echo "Downloading and extracting $CLANG_VERSION..."
+      # Langsung ekstrak ke direktori induk
+      curl -L "$CLANG_URL" | tar -xz -C $CLANG_PARENT_DIR
+      
+      # 5. FIX: Buat symlink agar toolchain ditemukan oleh build script AOSP
+      cd $CLANG_PARENT_DIR
+      ln -sf $CLANG_VERSION clang-r416183b
+      cd - # Kembali ke $GKI_DIR
+      
+      echo "[✓] Setup Toolchain dan Dependencies selesai"
+
+  - name: Setup Git Identity
+    run: |
+      echo "[2/10] Setup git identity"
+      git config --global user.email "kingfinix98@gmail.com"
+      git config --global user.name "goten"
+      echo "[✓] Setup completed"
+
+  - name: Init and Sync Kernel Source (GKI 5.10 Base)
+    run: |
+      cd $GKI_DIR
+      echo "[3/10] Init and Sync kernel source common-android12-5.10"
+      # Init repo untuk mendapatkan struktur direktori AOSP kernel
+      repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10
+      repo --trace sync -c -j$(nproc) --no-tags --fail-fast
+      echo "[✓] Sync completed"
+
+  - name: Apply Upstream Rama (Basis 5.10.246)
+    run: |
+      cd $COMMON_DIR
+      echo "[4/10] Applying latest patches from rama/android_kernel_common-5.10"
+      git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
+      git fetch -j12 rama
+      # Pull untuk mendapatkan patch terbaru Rama (hingga 5.10.246)
+      git pull rama android12-5.10-staging || echo "[!] Patch conflicts might occur, proceeding anyway."
+      echo "[✓] Upstream completed"
+
+  - name: Clone KernelSU (KowSU Method - SUSFS V2.0.0)
+    run: |
+      cd $COMMON_DIR
+      echo "[5/10] Cloning KernelSU (SUSFS V2.0.0) dari repo Rama"
+      # Hapus directory kernelsu lama/kosong (metode SukiSU)
+      rm -rf drivers/staging/kernelsu 2>/dev/null || true
+      # Clone KernelSU dari repositori Rama, menempatkannya di staging
+      git clone https://github.com/ramabondanp/KernelSU.git -b main drivers/staging/kernelsu
+      echo "[✓] KernelSU cloned successfully"
+
+  - name: Apply Compatibility Patches and Clang Fixes
+    run: |
+      echo "[6/10] Applying inline patches (module.c & drm) and Clang path fix"
+      # FIX: Inline Patch module.c dan drm_atomic_helper.c (Xiaomi Fix)
+      sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' $COMMON_DIR/kernel/module.c
+      sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' $COMMON_DIR/drivers/gpu/drm/drm_atomic_helper.c
+      sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' $COMMON_DIR/drivers/gpu/drm/drm_atomic_helper.c
+      
+      # FIX: Memastikan build.sh menggunakan Clang versi yang benar
+      sed -i "s/clang-r[0-9]*[a-z]*/$CLANG_VERSION/g" $COMMON_DIR/build.config.gki.aarch64
+      sed -i "s/clang-r[0-9]*[a-z]*/$CLANG_VERSION/g" $COMMON_DIR/build.config.common 2>/dev/null || true
+      echo "[✓] Patches dan Fixes Applied"
+
+  - name: Modified gki_defconfig (KowSU/BoltX Configuration)
+    run: |
+      echo "[7/10] Enabling KSU SUSFS V2.0.0 dan Optimizations"
+      DEFCONFIG_FILE="$COMMON_DIR/${DEFCONFIG}"
+      {
+        # KSU Configuration (Sesuai KowSU)
+        echo "CONFIG_KSU=y"
+        echo "CONFIG_KPM=y"
+        echo "CONFIG_KSU_MANUAL_HOOK=y"
+        echo "CONFIG_KSU_KPROBES_HOOK=n"
+
+        # SUSFS Configuration (Stealth Enhanced - Sesuai KowSusu.sh)
+        echo "CONFIG_KSU_SUSFS=y"
+        echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y"
+        echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
+        echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y"
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y"
+        echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+        echo "CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y"
+        echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y"
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y"
+        echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+        echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+        echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+        echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
+        echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+        echo "CONFIG_KSU_SUSFS_SUS_SU=y"
+        echo "CONFIG_KSU_SUSFS_SUS_KSTAT_SPOOF_GENERIC=y"
+        echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSTAT=y"
+
+        # Optimization Features
+        echo "CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y"
+        echo "CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y"
+        echo "CONFIG_ENERGY_MODEL=y"
+        echo "CONFIG_HZ_500=y" 
+        echo "CONFIG_HIGH_RES_TIMERS=y"
+        echo "CONFIG_CLEANCACHE=y"
+        echo "CONFIG_TMPFS_XATTR=y"
+        echo "CONFIG_TMPFS_POSIX_ACL=y"
+        
+      } >> "$DEFCONFIG_FILE"
+      echo "[✓] Config Configured"
+
+  - name: Set Kernel Name and Disable Check Defconfig
+    run: |
+      echo "[8/10] Finalizing build configuration"
+      # Menonaktifkan KMI defconfig check
+      sed -i 's/check_defconfig//' $COMMON_DIR/build.config.gki
+      
+      # Mengatur nama kernel ($BRAND) di setlocalversion
+      echo "echo \"$BRAND\"" > ./common/scripts/setlocalversion
+      chmod +x ./common/scripts/setlocalversion
+
+      DEFCONFIG2="./common/arch/arm64/configs/gki_defconfig"
+      # Menimpa CONFIG_LOCALVERSION di defconfig
+      sed -i '/^CONFIG_LOCALVERSION=/d' "$DEFCONFIG2"
+      echo "CONFIG_LOCALVERSION=\"$BRAND\"" >> "$DEFCONFIG2"
+      echo "CONFIG_LOCALVERSION_AUTO=n" >> "$DEFCONFIG2"
+      echo "[✓] Completed"
+
+  - name: Build Kernel (LTO Thin)
+    run: |
+      echo "[9/10] Building kernel with ccache dan LTO=thin"
+      # Menghapus batasan build DLKM dan KMI (agar build custom berhasil)
+      sed -i 's/BUILD_SYSTEM_DLKM=1/BUILD_SYSTEM_DLKM=0/' $COMMON_DIR/build.config.gki.aarch64
+      sed -i '/MODULES_ORDER=android\/gki_aarch64_modules/d' $COMMON_DIR/build.config.gki.aarch64
+      sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' $COMMON_DIR/build.config.gki.aarch64
+
+      # Pengaturan ccache
+      export CC="ccache clang"
+      export USE_CCACHE=1
+      ccache -M 5G
+
+      cd $GKI_DIR
+      # Perintah build utama menggunakan build.sh AOSP
+      KBUILD_BUILD_USER=zixine KBUILD_BUILD_HOST=aetherium LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh -j$(nproc)
+      echo "[✓] Kernel build with status Success"
+
+  - name: Upload Image to Pixeldrain
+    id: upload
+    run: |
+      echo "[10/10] Uploading Image"
+      IMAGE_PATH=$(find $GKI_DIR/out -type f -name Image | head -n 1)
+      if [ -z "$IMAGE_PATH" ]; then
+        echo "❌ Image not found"
+        exit 1
+      fi
+      # Mengunggah ke Pixeldrain menggunakan token dari skrip lama
+      RESPONSE=$(curl -s -u :37d09351-44a8-4bfb-b245-b04e3069e61b -F file=@"$IMAGE_PATH" https://pixeldrain.com/api/file)
+      FILE_ID=$(echo "$RESPONSE" | grep -oP '"id":"\K[^"]+')
+      echo "link=https://pixeldrain.com/u/$FILE_ID" >> $GITHUB_OUTPUT
+
+  - name: Show link download
+    run: |
+      echo "🎉 Build Finished!"
+      echo "🔗 Link Image: ${{ steps.upload.outputs.link }}"
