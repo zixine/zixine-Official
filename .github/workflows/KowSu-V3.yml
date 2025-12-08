@@ -148,6 +148,8 @@ jobs:
           CONFIG_DEFAULT_BBR=y
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
+          CONFIG_MQ_KYBER=y
+          CONFIG_DEFAULT_KYBER=y
           EOF
 
       - name: Apply Extra Cherry-Picks
