@@ -42,7 +42,7 @@ jobs:
       - name: Configure Git
         run: |
           git config --global user.name "zixine"
-          git config --global user.email "waheiiiddd@gmail.com"
+          git config --global user.email "waheid005@gmail.com"
 
       - name: Initialize Repo & Sync
         run: |
