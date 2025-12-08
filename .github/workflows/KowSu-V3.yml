@@ -41,8 +41,8 @@ jobs:
 
       - name: Configure Git
         run: |
-          git config --global user.name "GitHub Action"
-          git config --global user.email "action@github.com"
+          git config --global user.name "zixine"
+          git config --global user.email "waheiiiddd@gmail.com"
 
       - name: Initialize Repo & Sync
         run: |
