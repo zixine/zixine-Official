@@ -1,4 +1,4 @@
-name: KowSU Fixed Staging
+name: KowSU SusFS Fixed v2
 
 on:
   workflow_dispatch:
@@ -76,19 +76,17 @@ jobs:
           rm -rf clang-r416183b
           ln -sf $CLANG_VER clang-r416183b
 
-      # --- LANGSUNG GANTI BAGIAN INI ---
-      - name: Setup Upstream & KernelSU-KowSU (SUBMODULE METHOD)
+      - name: Setup Upstream Rama update 
         working-directory: gki/common
         run: |
+          # Upstream to 5.10.246 logic
           git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
           git fetch -j12 rama
           git checkout -b update-5.10.247 rama/android12-5.10-staging
-
-          # INIT & UPDATE SUBMODULE — INI YANG BENAR
-          git submodule update --init --recursive drivers/staging/kernelsu
-
-          echo "✅ KernelSU Rama submodule updated"
-      # --- SAMPAI SINI ---
+          
+          # Setup KernelSU-KowSU
+          rm -rf drivers/staging/kernelsu
+          git clone https://github.com/ramabondanp/KernelSU.git -b main drivers/staging/kernelsu
 
       - name: Apply Compatibility Patches
         working-directory: gki/common
@@ -98,7 +96,7 @@ jobs:
           sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
           sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
 
-      - name: Configure Defconfig (KowSU)
+      - name: Configure Defconfig (KSU/SuSFS)
         working-directory: gki/common
         run: |
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
