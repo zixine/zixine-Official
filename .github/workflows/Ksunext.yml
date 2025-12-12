@@ -167,7 +167,7 @@ jobs:
           CONFIG_BFQ_GROUP_IOSCHED=y
           CONFIG_ZRAM=y
           CONFIG_ZRAM_WRITEBACK=y
-EOF
+          EOF
 
       - name: Set version
         working-directory: gki/common
