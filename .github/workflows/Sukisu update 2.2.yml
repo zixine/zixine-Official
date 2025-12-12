@@ -35,8 +35,8 @@ jobs:
 
       - name: Setup git identity
         run: |
-          git config --global user.name "BoltX"
-          git config --global user.email "kingfinik98@gmail.com"
+          git config --global user.name "zixine"
+          git config --global user.email "waheid005@gmail.com"
 
       - name: Install Dependencies
         run: |
