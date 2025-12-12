@@ -181,7 +181,21 @@ jobs:
           echo "CONFIG_TCP_CONG_WESTWOOD=n" >> $DEFCONFIG
           echo "CONFIG_TCP_CONG_HTCP=n" >> $DEFCONFIG 
           echo "CONFIG_DEFAULT_BBR=y" >> $DEFCONFIG
-
+          
+      - name: Inject KSU Inline Hook Configs
+        run: |
+          DEFCONFIG="gki/common/arch/arm64/configs/gki_defconfig"
+          echo "Injecting Inline Hook configs to $DEFCONFIG"
+          
+          # --- Tambahkan Inline Hook Configs ---
+          echo "CONFIG_KSU_INLINE_HOOK=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_INLINE_HOOK_TRAMPOLINE=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_INLINE_HOOK_TRAMPOLINE_SIZE=64" >> $DEFCONFIG
+          echo "CONFIG_KSU_INLINE_HOOK_MANAGER_ONLY=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_INLINE_HOOK_WITH_KSU_PATCH=y" >> $DEFCONFIG
+          
+          echo "Inline Hook configs successfully injected."
+          
       - name: Set Kernel EXTRAVERSION (Optional)
         run: |
           cd gki/common
