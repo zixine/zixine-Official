@@ -1,0 +1,249 @@
+# KernelSU-next-v2 3.0.0
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_name:
+        description: 'Custom Kernel Name (Leave empty for default)'
+        required: false
+        default: ''
+        type: string
+      clang_version:
+        description: 'Select Clang Version'
+        required: true
+        type: choice
+        options:
+          - 'r536225 (Clang 19)'
+          - 'r547379 (Clang 20)'
+
+jobs:
+  build:
+    name: Build Kernel
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Free disk space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          swap-size-mb: 10240
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "boltx"
+          git config --global user.email "kingfinix98@gmail.com"
+
+      - name: Install build tools
+        run: |
+          sudo apt update && sudo apt upgrade -y
+          sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
+            libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld
+
+      - name: Init & Sync GKI
+        run: |
+          mkdir gki && cd gki
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
+          repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
+
+      - name: Apply Rama patch
+        working-directory: gki/common
+        run: |
+          echo "Downloading commit 881fa16..."
+          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/881fa16.patch" -o rama.patch
+          
+          echo "Attempting git am..."
+          if git am -3 < rama.patch; then
+            echo "✅ git am succeeded."
+          else
+            echo "⚠️ git am failed. Aborting and falling back to force patch..."
+            git am --abort
+            
+            # Apply patch, allow partial failure (skipped hunks are fine)
+            patch -p1 --fuzz=3 < rama.patch || true
+            
+            echo "✅ Applied via patch -p1 (Conflicts/Duplicates ignored)."
+          fi
+          rm rama.patch
+
+      - name: Tweak build config
+        run: |
+          sed -i '2d' gki/common/build.config.gki
+
+      - name: Setup KernelSU-Next v3.0.0 (Fixed Commit)
+        working-directory: gki/common
+        run: |
+          echo "🧩 Menyiapkan KernelSU-Next v3.0.0 (commit 58d02f4) secara manual..."
+          
+          # Hapus folder lama jika ada
+          rm -rf KernelSU-Next
+          
+          # Clone repositori resmi
+          git clone https://github.com/KernelSU-Next/KernelSU-Next.git
+          
+          # Masuk ke folder dan checkout ke commit v3.0.0
+          cd KernelSU-Next
+          git checkout 58d02f4
+          
+          # Kembali ke folder common untuk integrasi
+          cd ..
+          
+          # Tambahkan KernelSU-Next ke Makefile agar ikut dibuild
+          echo "obj-\$(CONFIG_KSU) += KernelSU-Next/" >> drivers/Makefile
+          
+          echo "✅ KernelSU-Next v3.0.0 (commit 58d02f4) siap dan diintegrasikan."
+
+      - name: Apply common fixes
+        working-directory: gki/common
+        run: |
+          echo "Applying requested cherry-picks..."
+          
+          # Patch 1: Common 5.10 update/fix
+          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | git am -3 || {
+             echo "git am failed, falling back to patch..."
+             curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1
+          }
+
+      - name: Fix Stack Protector
+        working-directory: gki/common
+        run: |
+          echo "🛠️ Applying manual Stack Protector fix "
+          # 1. Edit arch/arm64/Kconfig
+          sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
+          # 2. Disable di gki_defconfig
+          echo "# CONFIG_STACKPROTECTOR_PER_TASK is not set" >> arch/arm64/configs/gki_defconfig
+          echo "✅ Stack Protector fix applied manually."
+
+      - name: Patch module & DRM (Xiaomi Compat)
+        working-directory: gki/common
+        run: |
+          echo "🩹 [9/10] Menerapkan patch kompatibilitas untuk perangkat Xiaomi"
+          sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
+          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
+          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
+          echo "✅ Perbaikan selesai"
+
+      - name: Remove check_defconfig
+        run: |
+          echo "🧹 [Clean-Up] Deleting check_defconfig"
+          sed -i 's/check_defconfig//' gki/common/build.config.gki
+
+      - name: Inject Kernel Configs
+        working-directory: gki/common
+        run: |
+          echo "⚙️ Menambahkan konfigurasi kernel"
+          DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          cat >> $DEFCONFIG <<EOF
+          # Config - Tambahan untuk Performa Game
+          # ===============================================
+          # Konfigurasi KSU NEXT (Kprobes)
+          CONFIG_KSU=y
+          CONFIG_KPM=n
+          CONFIG_KSU_MANUAL_HOOK=n
+          CONFIG_KSU_KPROBES_HOOK=y
+          # Add additional tmpfs config setting
+          CONFIG_TMPFS_XATTR=y
+          CONFIG_TMPFS_POSIX_ACL=y
+          # Add additional config setting
+          CONFIG_IP_NF_TARGET_TTL=y
+          CONFIG_IP6_NF_TARGET_HL=y
+          CONFIG_IP6_NF_MATCH_HL=y
+          # Add BBR Config
+          CONFIG_TCP_CONG_ADVANCED=y
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_NET_SCH_FQ=y
+          CONFIG_TCP_CONG_BIC=n
+          CONFIG_TCP_CONG_WESTWOOD=n
+          CONFIG_TCP_CONG_HTCP=n
+          CONFIG_DEFAULT_BBR=y
+          # Optimasi tambahan (Smooth & Responsiveness)
+          CONFIG_HZ_300=y
+          CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
+          CONFIG_SCHED_TUNE=y
+          CONFIG_MQ_IOSCHED_KYBER=y
+          CONFIG_MQ_IOSCHED_BFQ=y
+          CONFIG_IOSCHED_BFQ=y
+          CONFIG_BFQ_GROUP_IOSCHED=y
+          CONFIG_ZRAM=y
+          CONFIG_ZRAM_WRITEBACK=y
+          EOF
+
+      - name: Set version
+        working-directory: gki/common
+        run: |
+          echo "" > scripts/setlocalversion
+          chmod +x scripts/setlocalversion
+          
+          KERNEL_NAME="${{ github.event.inputs.kernel_name }}"
+
+          if [ -n "$KERNEL_NAME" ]; then
+             echo "Setting custom kernel name: $KERNEL_NAME"
+             if grep -q '^EXTRAVERSION *=' Makefile; then
+               sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$KERNEL_NAME/" Makefile
+             else
+               echo "EXTRAVERSION = -$KERNEL_NAME" >> Makefile
+             fi
+          else
+             echo "Kernel name input is empty. Skipping custom name (Using Default)."
+          fi
+
+      - name: Setup Clang
+        working-directory: gki
+        run: |
+          mkdir -p prebuilts-master/clang/host/linux-x86
+          
+          if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
+            echo "Setting up Clang-19 (r536225)..."
+            CLANG_VER="clang-r536225"
+            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
+          else
+            echo "Setting up Clang-20 (r547379)..."
+            CLANG_VER="clang-r547379"
+            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
+          fi
+          
+          echo "CLANG_VER=$CLANG_VER" >> $GITHUB_ENV
+
+          mkdir -p prebuilts-master/clang/host/linux-x86/$CLANG_VER
+          cd prebuilts-master/clang/host/linux-x86
+          curl -L "${CLANG_URL}" | tar -xz -C $CLANG_VER
+          
+          rm -rf clang-r416183b
+          ln -sf $CLANG_VER clang-r416183b
+
+      - name: Commit changes
+        working-directory: gki/common
+        run: |
+          git add .
+          git commit -m "Final clean tree before build" || true
+
+      - name: Compile
+        working-directory: gki
+        run: |
+          LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: BoltX-Kernel-Image
+          path: gki/out/android12-5.10/common/arch/arm64/boot/Image
+          if-no-files-found: warn
+
+      - name: Push to PixelDrain
+        if: always() 
+        run: |
+          if [ -f gki/out/android12-5.10/common/arch/arm64/boot/Image ]; then
+            curl -u :cf8ac774-486a-4775-9028-e7f134fcafc8 \
+              -F file=@gki/out/android12-5.10/common/arch/arm64/boot/Image \
+              https://pixeldrain.com/api/file
+          else
+            echo "Image file not found. Build likely failed."
+          fi
