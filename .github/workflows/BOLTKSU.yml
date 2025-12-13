@@ -164,10 +164,12 @@ jobs:
           CONFIG_TCP_CONG_HTCP=n
           CONFIG_DEFAULT_BBR=y
           # Optimasi tambahan (Smooth & Responsiveness)
-          CONFIG_HZ_300=y
+          CONFIG_HZ_500=y
           CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
           CONFIG_SCHED_TUNE=y
           CONFIG_MQ_IOSCHED_KYBER=y
+          CONFIG_DEFAULT_IOSCHED="kyber"
+          CONFIG_DEFAULT_IOSCHED_BFQ=n
           CONFIG_MQ_IOSCHED_BFQ=y
           CONFIG_IOSCHED_BFQ=y
           CONFIG_BFQ_GROUP_IOSCHED=y
@@ -241,7 +243,7 @@ jobs:
         if: always() 
         run: |
           if [ -f gki/out/android12-5.10/common/arch/arm64/boot/Image ]; then
-            curl -u :cf8ac774-486a-4775-9028-e7f134fcafc8 \
+            curl -u :37d09351-44a8-4bfb-b245-b04e3069e61b \
               -F file=@gki/out/android12-5.10/common/arch/arm64/boot/Image \
               https://pixeldrain.com/api/file
           else
