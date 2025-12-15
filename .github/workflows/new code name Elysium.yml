@@ -149,6 +149,7 @@ jobs:
           CONFIG_DEFAULT_BBR=y
           # Optimasi tambahan (Smooth & Responsiveness)
           CONFIG_HZ_300=y
+          CONFIG_NO_HZ_FULL=y
           CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
           CONFIG_SCHED_TUNE=y
           CONFIG_MQ_IOSCHED_KYBER=y
