@@ -1,4 +1,4 @@
-# KernelSU-next 3.0.0
+name: 2 KSU-Next (Final Fix - HZ 500)
 
 on:
   workflow_dispatch:
@@ -38,8 +38,8 @@ jobs:
 
       - name: Configure Git
         run: |
-          git config --global user.name "zixine"
-          git config --global user.email "waheid005@gmail.com"
+          git config --global user.name "kaminari"
+          git config --global user.email "itawanri14@gmail.com"
 
       - name: Install build tools
         run: |
@@ -60,15 +60,13 @@ jobs:
           curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/881fa16.patch" -o rama.patch
           
           echo "Attempting git am..."
-          if git am -3 < rama.patch; then
+          if git am -3 < rama.patch;
+          then
             echo "✅ git am succeeded."
           else
             echo "⚠️ git am failed. Aborting and falling back to force patch..."
             git am --abort
-            
-            # Apply patch, allow partial failure (skipped hunks are fine)
             patch -p1 --fuzz=3 < rama.patch || true
-            
             echo "✅ Applied via patch -p1 (Conflicts/Duplicates ignored)."
           fi
           rm rama.patch
@@ -88,8 +86,6 @@ jobs:
         working-directory: gki/common
         run: |
           echo "Applying requested cherry-picks..."
-          
-          # Patch 1: Common 5.10 update/fix
           curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | git am -3 || {
              echo "git am failed, falling back to patch..."
              curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1
@@ -99,9 +95,7 @@ jobs:
         working-directory: gki/common
         run: |
           echo "🛠️ Applying manual Stack Protector fix "
-          # 1. Edit arch/arm64/Kconfig
           sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
-          # 2. Disable di gki_defconfig
           echo "# CONFIG_STACKPROTECTOR_PER_TASK is not set" >> arch/arm64/configs/gki_defconfig
           echo "✅ Stack Protector fix applied manually."
 
@@ -118,12 +112,49 @@ jobs:
         run: |
           echo "🧹 [Clean-Up] Deleting check_defconfig"
           sed -i 's/check_defconfig//' gki/common/build.config.gki
+          
+      # =======================================================
+      # --- START HZ FIX (AGRESIF) ---
+      # =======================================================
+      
+      - name: Force CONFIG_HZ=500 via Kconfig Override
+        run: |
+          cd gki/common/kernel
+          HZ_KCONFIG="Kconfig.hz"
+          
+          echo "Memodifikasi Kconfig.hz untuk memaksa CONFIG_HZ_500..."
+
+          # Hapus semua pilihan HZ yang bertentangan
+          sed -i '/config HZ_100/,+1 d' $HZ_KCONFIG
+          sed -i '/config HZ_250/,+1 d' $HZ_KCONFIG
+          sed -i '/config HZ_300/,+1 d' $HZ_KCONFIG
+          sed -i '/config HZ_1000/,+1 d' $HZ_KCONFIG
+
+          # Tambahkan kembali CONFIG_HZ_500 dan jadikan sebagai default tunggal
+          echo -e "config HZ_500\n\tbool \"500 HZ\"\n\tdefault y\n" >> $HZ_KCONFIG
+          
+          echo "Kconfig.hz berhasil dimodifikasi."
+
+      # =======================================================
+      # --- END HZ FIX ---
+      # =======================================================
 
       - name: Inject Kernel Configs
         working-directory: gki/common
         run: |
           echo "⚙️ Menambahkan konfigurasi kernel"
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          
+          # --- Hapus HZ 300 yang salah dan tambahkan 500 HZ ke defconfig ---
+          sed -i '/CONFIG_HZ_300/d' $DEFCONFIG
+          sed -i '/CONFIG_HZ=/d' $DEFCONFIG
+          echo 'CONFIG_HZ_500=y' >> $DEFCONFIG
+          echo 'CONFIG_HZ=500' >> $DEFCONFIG
+          
+          # --- IKCONFIG (Untuk verifikasi /proc/config.gz) ---
+          echo "CONFIG_IKCONFIG=y" >> $DEFCONFIG
+          echo "CONFIG_IKCONFIG_PROC=y" >> $DEFCONFIG
+          
           cat >> $DEFCONFIG <<EOF
           # Config - Tambahan untuk Performa Game
           # ===============================================
@@ -156,19 +187,7 @@ jobs:
           CONFIG_BFQ_GROUP_IOSCHED=y
           CONFIG_ZRAM=y
           CONFIG_ZRAM_WRITEBACK=y
-          # 1. Hapus semua CONFIG_HZ_xxx yang mungkin sudah ada (untuk mencegah konflik)
-          sed -i '/CONFIG_HZ_100/d' $DEFCONFIG
-          sed -i '/CONFIG_HZ_250/d' $DEFCONFIG
-          sed -i '/CONFIG_HZ_300/d' $DEFCONFIG
-          sed -i '/CONFIG_HZ_500/d' $DEFCONFIG
-          sed -i '/CONFIG_HZ_1000/d' $DEFCONFIG
-          # 2. Hapus CONFIG_HZ yang mungkin ada
-          sed -i '/CONFIG_HZ=/d' $DEFCONFIG
-          # 3. Suntikkan nilai yang diinginkan (500)
-          echo -e '\nCONFIG_HZ_500=y' >> $DEFCONFIG
-          echo 'CONFIG_HZ=500' >> $DEFCONFIG       
-          echo "CONFIG_HZ=500 injection complete."
-          EOF
+EOF
 
       - name: Set version
         working-directory: gki/common
@@ -178,9 +197,11 @@ jobs:
           
           KERNEL_NAME="${{ github.event.inputs.kernel_name }}"
 
-          if [ -n "$KERNEL_NAME" ]; then
+          if [ -n "$KERNEL_NAME" ];
+          then
              echo "Setting custom kernel name: $KERNEL_NAME"
-             if grep -q '^EXTRAVERSION *=' Makefile; then
+             if grep -q '^EXTRAVERSION *=' Makefile;
+             then
                sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$KERNEL_NAME/" Makefile
              else
                echo "EXTRAVERSION = -$KERNEL_NAME" >> Makefile
@@ -194,7 +215,8 @@ jobs:
         run: |
           mkdir -p prebuilts-master/clang/host/linux-x86
           
-          if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
+          if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ];
+          then
             echo "Setting up Clang-19 (r536225)..."
             CLANG_VER="clang-r536225"
             CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
@@ -228,7 +250,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: zixine
+          name: zixineKernel
           path: gki/out/android12-5.10/common/arch/arm64/boot/Image
           if-no-files-found: warn
 
@@ -236,9 +258,11 @@ jobs:
         if: always() 
         run: |
           if [ -f gki/out/android12-5.10/common/arch/arm64/boot/Image ]; then
-            curl -u :cf8ac774-486a-4775-9028-e7f134fcafc8 \
+            # Token dari file SukiSU Anda: 
+            curl -u :37d09351-44a8-4bfb-b245-b04e3069e61b \
               -F file=@gki/out/android12-5.10/common/arch/arm64/boot/Image \
               https://pixeldrain.com/api/file
           else
             echo "Image file not found. Build likely failed."
           fi
+          
