@@ -114,12 +114,13 @@ jobs:
           sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
           echo "✅ Perbaikan selesai"
 
+            # ... (Langkah-langkah sebelumnya)
+      
       - name: Remove check_defconfig
         run: |
           echo "🧹 [Clean-Up] Deleting check_defconfig"
           sed -i 's/check_defconfig//' gki/common/build.config.gki
-                # ... (Langkah sebelumnya)
-      
+          
       # =======================================================
       # --- START HZ FIX (AGRESIF DAN AMAN) ---
       # =======================================================
@@ -129,81 +130,85 @@ jobs:
           cd gki/common/kernel
           HZ_KCONFIG="Kconfig.hz"
           
-          echo "Memodifikasi Kconfig.hz untuk memaksa CONFIG_HZ_500 dengan menghapus blok konflik..."
+          echo "Memodifikasi Kconfig.hz untuk memaksa CONFIG_HZ_500..."
 
-          # Hapus seluruh blok menu 'Timer frequency' (Solusi teraman untuk menghindari Error 2)
+          # Hapus seluruh blok menu 'Timer frequency'
           sed -i '/menu "Timer frequency"/,/endmenu/d' $HZ_KCONFIG
 
           # Tambahkan kembali blok yang dimodifikasi. Konten di bawah ini HARUS dimulai tanpa spasi/tab.
           cat >> $HZ_KCONFIG <<EOF
-          menu "Timer frequency"
+menu "Timer frequency"
 
-          config HZ_500
-	      bool "500 HZ"
-	      default y
-         config HZ
-	      int
-	      default 500 if HZ_500
-	      default 300 if HZ_300
-	      default 250 if HZ_250
-	      default 100 if HZ_100
-          endmenu
-          EOF
+config HZ_500
+	bool "500 HZ"
+	default y
+
+config HZ
+	int
+	default 500 if HZ_500
+	default 300 if HZ_300
+	default 250 if HZ_250
+	default 100 if HZ_100
+	
+endmenu
+EOF
           echo "✅ Kconfig.hz berhasil dimodifikasi."
 
       # =======================================================
       # --- END HZ FIX ---
       # =======================================================
-      
-      # ... (Langkah selanjutnya)
-
 
       - name: Inject Kernel Configs
         working-directory: gki/common
         run: |
           echo "⚙️ Menambahkan konfigurasi kernel"
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
-          cat >> $DEFCONFIG <<EOF
-          # --- Hapus HZ 300 yang salah dan tambahkan 500 HZ ke defconfig
-          sed -i '/CONFIG_HZ_300/d' $DEFCONFIG
-          sed -i '/CONFIG_HZ=/d' $DEFCONFIG
-          echo 'CONFIG_HZ_500=y' >> $DEFCONFIG
+          
+          # --- HZ Injection (Bersihkan sisa dan Suntikkan 500 HZ ke defconfig) ---
+          sed -i '/CONFIG_HZ_300/d' $DEFCONFIG 
+          sed -i '/CONFIG_HZ=/d' $DEFCONFIG     
+          echo 'CONFIG_HZ_500=y' >> $DEFCONFIG 
           echo 'CONFIG_HZ=500' >> $DEFCONFIG
+          
           # --- IKCONFIG (Untuk verifikasi /proc/config.gz) ---
           echo "CONFIG_IKCONFIG=y" >> $DEFCONFIG
           echo "CONFIG_IKCONFIG_PROC=y" >> $DEFCONFIG
-          # Config - Tambahan untuk Performa Game
-          # Konfigurasi KSU NEXT (Kprobes)
-          CONFIG_KSU=y
-          CONFIG_KPM=n
-          CONFIG_KSU_MANUAL_HOOK=n
-          CONFIG_KSU_KPROBES_HOOK=y
-          # Add additional tmpfs config setting
-          CONFIG_TMPFS_XATTR=y
-          CONFIG_TMPFS_POSIX_ACL=y
-          # Add additional config setting
-          CONFIG_IP_NF_TARGET_TTL=y
-          CONFIG_IP6_NF_TARGET_HL=y
-          CONFIG_IP6_NF_MATCH_HL=y
-          # Add BBR Config
-          CONFIG_TCP_CONG_ADVANCED=y
-          CONFIG_TCP_CONG_BBR=y
-          CONFIG_NET_SCH_FQ=y
-          CONFIG_TCP_CONG_BIC=n
-          CONFIG_TCP_CONG_WESTWOOD=n
-          CONFIG_TCP_CONG_HTCP=n
-          CONFIG_DEFAULT_BBR=y
-          # Optimasi tambahan (Smooth & Responsiveness)
-          CONFIG_HZ_300=y
-          CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
-          CONFIG_SCHED_TUNE=y
-          CONFIG_MQ_IOSCHED_KYBER=y
-          CONFIG_MQ_IOSCHED_BFQ=y
-          CONFIG_IOSCHED_BFQ=y
-          CONFIG_BFQ_GROUP_IOSCHED=y
-          CONFIG_ZRAM=y
-          CONFIG_ZRAM_WRITEBACK=y
-          EOF
+          
+          # Inject Configs lainnya (Pastikan ini juga bersih dari indentasi di file Anda)
+          cat >> $DEFCONFIG <<EOF
+# Config - Tambahan untuk Performa Game
+# ===============================================
+# Konfigurasi KSU NEXT (Kprobes)
+CONFIG_KSU=y
+CONFIG_KPM=n
+CONFIG_KSU_MANUAL_HOOK=n
+CONFIG_KSU_KPROBES_HOOK=y
+# Add additional tmpfs config setting
+CONFIG_TMPFS_XATTR=y
+CONFIG_TMPFS_POSIX_ACL=y
+# Add additional config setting
+CONFIG_IP_NF_TARGET_TTL=y
+CONFIG_IP6_NF_TARGET_HL=y
+CONFIG_IP6_NF_MATCH_HL=y
+# Add BBR Config
+CONFIG_TCP_CONG_ADVANCED=y
+CONFIG_TCP_CONG_BBR=y
+CONFIG_NET_SCH_FQ=y
+CONFIG_TCP_CONG_BIC=n
+CONFIG_TCP_CONG_WESTWOOD=n
+CONFIG_TCP_CONG_HTCP=n
+CONFIG_DEFAULT_BBR=y
+# Optimasi tambahan (Smooth & Responsiveness)
+CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
+CONFIG_SCHED_TUNE=y
+CONFIG_MQ_IOSCHED_KYBER=y
+CONFIG_MQ_IOSCHED_BFQ=y
+CONFIG_IOSCHED_BFQ=y
+CONFIG_BFQ_GROUP_IOSCHED=y
+CONFIG_ZRAM=y
+CONFIG_ZRAM_WRITEBACK=y
+EOF
+
 
       - name: Set version
         working-directory: gki/common
