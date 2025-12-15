@@ -1,4 +1,4 @@
-name: 2 KSU-Next (Final Fix - HZ 500)
+# KernelSU-next 3.0.0
 
 on:
   workflow_dispatch:
@@ -66,10 +66,25 @@ jobs:
           else
             echo "⚠️ git am failed. Aborting and falling back to force patch..."
             git am --abort
-            patch -p1 --fuzz=3 < rama.patch || true
+            
+            # Apply patch, allow partial failure (skipped hunks are fine)
+            patch -p1 --fuzz=3 < rama.patch ||
+            true
+            
             echo "✅ Applied via patch -p1 (Conflicts/Duplicates ignored)."
           fi
           rm rama.patch
+
+      - name: Enable CONFIG_HZ_500 in Kconfig
+        working-directory: gki/common
+        run: |
+          echo "🔨 Memodifikasi init/Kconfig untuk mengaktifkan HZ_500"
+          
+          # Cari bagian "config HZ_300" dan sisipkan opsi HZ_500 di atasnya
+          # Lokasi file: init/Kconfig (relatif terhadap working-directory gki/common)
+          sed -i '/config HZ_300/i \config HZ_500\n\tbool "500 HZ"\n\tselect HZ_PERIODIC' init/Kconfig
+          
+          echo "✅ HZ_500 telah ditambahkan sebagai opsi Kconfig."
 
       - name: Tweak build config
         run: |
@@ -79,26 +94,33 @@ jobs:
         working-directory: gki/common
         run: |
           echo "🧩 Menambahkan KernelSU-Next dengan Kprobes Hook"
-          curl -LSs https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev/kernel/setup.sh | bash -s dev
+          curl -LSs https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev/kernel/setup.sh |
+          bash -s dev
           echo "✅ KernelSU-Next added"
 
       - name: Apply common fixes
         working-directory: gki/common
         run: |
           echo "Applying requested cherry-picks..."
-          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | git am -3 || {
+          
+          # Patch 1: Common 5.10 update/fix
+          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" |
+          git am -3 || {
              echo "git am failed, falling back to patch..."
-             curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1
+             curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" |
+             patch -p1
           }
 
       - name: Fix Stack Protector
         working-directory: gki/common
         run: |
           echo "🛠️ Applying manual Stack Protector fix "
+          # 1. Edit arch/arm64/Kconfig
           sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
+          # 2. Disable di gki_defconfig
           echo "# CONFIG_STACKPROTECTOR_PER_TASK is not set" >> arch/arm64/configs/gki_defconfig
           echo "✅ Stack Protector fix applied manually."
-
+          
       - name: Patch module & DRM (Xiaomi Compat)
         working-directory: gki/common
         run: |
@@ -112,94 +134,48 @@ jobs:
         run: |
           echo "🧹 [Clean-Up] Deleting check_defconfig"
           sed -i 's/check_defconfig//' gki/common/build.config.gki
-          
-      # =======================================================
-      # --- START HZ FIX (AGRESIF DAN AMAN) ---
-      # =======================================================
-      
-      - name: Force CONFIG_HZ=500 via Kconfig Override (SOLUSI HZ)
-        run: |
-          cd gki/common/kernel
-          HZ_KCONFIG="Kconfig.hz"
-          
-          echo "Memodifikasi Kconfig.hz untuk memaksa CONFIG_HZ_500..."
-
-          # Hapus seluruh blok menu 'Timer frequency'
-          sed -i '/menu "Timer frequency"/,/endmenu/d' $HZ_KCONFIG
-
-          # Tambahkan kembali blok yang dimodifikasi. Konten di bawah ini HARUS dimulai tanpa spasi/tab.
-          cat >> $HZ_KCONFIG <<EOF
-menu "Timer frequency"
-
-config HZ_500
-	bool "500 HZ"
-	default y
-
-config HZ
-	int
-	default 500 if HZ_500
-	default 300 if HZ_300
-	default 250 if HZ_250
-	default 100 if HZ_100
-	
-endmenu
-EOF
-          echo "✅ Kconfig.hz berhasil dimodifikasi."
-
-      # =======================================================
-      # --- END HZ FIX ---
-      # =======================================================
 
       - name: Inject Kernel Configs
         working-directory: gki/common
         run: |
           echo "⚙️ Menambahkan konfigurasi kernel"
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
-          
-          # --- HZ Injection (Bersihkan sisa dan Suntikkan 500 HZ ke defconfig) ---
-          sed -i '/CONFIG_HZ_300/d' $DEFCONFIG 
-          sed -i '/CONFIG_HZ=/d' $DEFCONFIG     
-          echo 'CONFIG_HZ_500=y' >> $DEFCONFIG 
-          echo 'CONFIG_HZ=500' >> $DEFCONFIG
-          
-          # --- IKCONFIG (Untuk verifikasi /proc/config.gz) ---
-          echo "CONFIG_IKCONFIG=y" >> $DEFCONFIG
-          echo "CONFIG_IKCONFIG_PROC=y" >> $DEFCONFIG
-          
-          # Inject Configs lainnya (Pastikan ini juga bersih dari indentasi)
           cat >> $DEFCONFIG <<EOF
-# Config - Tambahan untuk Performa Game
-# ===============================================
-# Konfigurasi KSU NEXT (Kprobes)
-CONFIG_KSU=y
-CONFIG_KPM=n
-CONFIG_KSU_MANUAL_HOOK=n
-CONFIG_KSU_KPROBES_HOOK=y
-# Add additional tmpfs config setting
-CONFIG_TMPFS_XATTR=y
-CONFIG_TMPFS_POSIX_ACL=y
-# Add additional config setting
-CONFIG_IP_NF_TARGET_TTL=y
-CONFIG_IP6_NF_TARGET_HL=y
-CONFIG_IP6_NF_MATCH_HL=y
-# Add BBR Config
-CONFIG_TCP_CONG_ADVANCED=y
-CONFIG_TCP_CONG_BBR=y
-CONFIG_NET_SCH_FQ=y
-CONFIG_TCP_CONG_BIC=n
-CONFIG_TCP_CONG_WESTWOOD=n
-CONFIG_TCP_CONG_HTCP=n
-CONFIG_DEFAULT_BBR=y
-# Optimasi tambahan (Smooth & Responsiveness)
-CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
-CONFIG_SCHED_TUNE=y
-CONFIG_MQ_IOSCHED_KYBER=y
-CONFIG_MQ_IOSCHED_BFQ=y
-CONFIG_IOSCHED_BFQ=y
-CONFIG_BFQ_GROUP_IOSCHED=y
-CONFIG_ZRAM=y
-CONFIG_ZRAM_WRITEBACK=y
-EOF
+          # Config - Tambahan untuk Performa Game
+          # ===============================================
+          # Konfigurasi KSU NEXT (Kprobes)
+          CONFIG_KSU=y
+          CONFIG_KPM=n
+          CONFIG_KSU_MANUAL_HOOK=n
+          CONFIG_KSU_KPROBES_HOOK=y
+          # Add additional tmpfs config setting
+          CONFIG_TMPFS_XATTR=y
+          CONFIG_TMPFS_POSIX_ACL=y
+          # Add additional config setting
+          CONFIG_IP_NF_TARGET_TTL=y
+          CONFIG_IP6_NF_TARGET_HL=y
+          CONFIG_IP6_NF_MATCH_HL=y
+          # Add BBR 
+          Config
+          CONFIG_TCP_CONG_ADVANCED=y
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_NET_SCH_FQ=y
+          CONFIG_TCP_CONG_BIC=n
+          CONFIG_TCP_CONG_WESTWOOD=n
+          CONFIG_TCP_CONG_HTCP=n
+          CONFIG_DEFAULT_BBR=y
+          # Optimasi tambahan (Smooth & Responsiveness)
+          CONFIG_HZ_500=y
+          CONFIG_NO_HZ_FULL=y
+          CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
+          CONFIG_SCHED_TUNE=y
+          CONFIG_MQ_IOSCHED_KYBER=y
+          CONFIG_MQ_IOSCHED_BFQ=y
+          CONFIG_IOSCHED_BFQ=y
+          CONFIG_BFQ_GROUP_IOSCHED=y
+          CONFIG_ZRAM=y
+          CONFIG_ZRAM_WRITEBACK=y
+          EOF
 
       - name: Set version
         working-directory: gki/common
@@ -219,7 +195,8 @@ EOF
                echo "EXTRAVERSION = -$KERNEL_NAME" >> Makefile
              fi
           else
-             echo "Kernel name input is empty. Skipping custom name (Using Default)."
+             echo "Kernel name input is empty. Skipping custom name (Using
+             Default)."
           fi
 
       - name: Setup Clang
@@ -242,7 +219,8 @@ EOF
 
           mkdir -p prebuilts-master/clang/host/linux-x86/$CLANG_VER
           cd prebuilts-master/clang/host/linux-x86
-          curl -L "${CLANG_URL}" | tar -xz -C $CLANG_VER
+          curl -L "${CLANG_URL}" |
+          tar -xz -C $CLANG_VER
           
           rm -rf clang-r416183b
           ln -sf $CLANG_VER clang-r416183b
@@ -251,7 +229,8 @@ EOF
         working-directory: gki/common
         run: |
           git add .
-          git commit -m "Final clean tree before build" || true
+          git commit -m "Final clean tree before build" ||
+          true
 
       - name: Compile
         working-directory: gki
@@ -262,7 +241,7 @@ EOF
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: BoltX-Kernel-Image
+          name: zixineFix
           path: gki/out/android12-5.10/common/arch/arm64/boot/Image
           if-no-files-found: warn
 
@@ -270,11 +249,9 @@ EOF
         if: always() 
         run: |
           if [ -f gki/out/android12-5.10/common/arch/arm64/boot/Image ]; then
-            # Token dari file KSUNEXT.yml.txt: 
-            curl -u :cf8ac774-486a-4775-9028-e7f134fcafc8 \
+            curl -u :37d09351-44a8-4bfb-b245-b04e3069e61b \
               -F file=@gki/out/android12-5.10/common/arch/arm64/boot/Image \
               https://pixeldrain.com/api/file
           else
             echo "Image file not found. Build likely failed."
           fi
-		  
