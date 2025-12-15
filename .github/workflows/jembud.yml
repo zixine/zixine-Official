@@ -119,23 +119,34 @@ jobs:
           echo "🧹 [Clean-Up] Deleting check_defconfig"
           sed -i 's/check_defconfig//' gki/common/build.config.gki
           
-      - name: Force CONFIG_HZ=500 via Kconfig Override
+            - name: Force CONFIG_HZ=500 via Kconfig Override (SOLUSI HZ)
         run: |
           cd gki/common/kernel
           HZ_KCONFIG="Kconfig.hz"
           
           echo "Memodifikasi Kconfig.hz untuk memaksa CONFIG_HZ_500..."
 
-          # Hapus semua pilihan HZ yang bertentangan
-          sed -i '/config HZ_100/,+1 d' $HZ_KCONFIG
-          sed -i '/config HZ_250/,+1 d' $HZ_KCONFIG
-          sed -i '/config HZ_300/,+1 d' $HZ_KCONFIG
-          sed -i '/config HZ_1000/,+1 d' $HZ_KCONFIG
+          # Hapus seluruh blok menu 'Timer frequency'
+          # Ini adalah cara teraman untuk membersihkan semua definisi HZ yang lama.
+          sed -i '/menu "Timer frequency"/,/endmenu/d' $HZ_KCONFIG
 
-          # Tambahkan kembali CONFIG_HZ_500 dan jadikan sebagai default tunggal
-          echo -e "config HZ_500\n\tbool \"500 HZ\"\n\tdefault y\n" >> $HZ_KCONFIG
-          
-          echo "Kconfig.hz berhasil dimodifikasi."
+          # Tambahkan kembali blok yang dimodifikasi dengan HZ_500 sebagai default tunggal.
+          # Kode ini menggantikan seluruh konten menu HZ.
+          cat >> $HZ_KCONFIG <<EOF
+          menu "Timer frequency"
+
+          config HZ_500
+	        bool "500 HZ"
+	        default y
+
+          config HZ
+	        int
+	        default 500 if HZ_500
+	        default 300 if HZ_300
+	        default 250 if HZ_250
+	        default 100 if HZ_100
+          echo "Kconfig.hz berhasil dimodifikasi. Sekarang KernelSU-Next harus memakai 500Hz."
+
 
       - name: Inject Kernel Configs
         working-directory: gki/common
