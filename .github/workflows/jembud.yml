@@ -118,34 +118,44 @@ jobs:
         run: |
           echo "🧹 [Clean-Up] Deleting check_defconfig"
           sed -i 's/check_defconfig//' gki/common/build.config.gki
-          
-            - name: Force CONFIG_HZ=500 via Kconfig Override (SOLUSI HZ)
+                # ... (Langkah sebelumnya)
+      
+      # =======================================================
+      # --- START HZ FIX (AGRESIF DAN AMAN) ---
+      # =======================================================
+      
+      - name: Force CONFIG_HZ=500 via Kconfig Override (SOLUSI HZ)
         run: |
           cd gki/common/kernel
           HZ_KCONFIG="Kconfig.hz"
           
-          echo "Memodifikasi Kconfig.hz untuk memaksa CONFIG_HZ_500..."
+          echo "Memodifikasi Kconfig.hz untuk memaksa CONFIG_HZ_500 dengan menghapus blok konflik..."
 
-          # Hapus seluruh blok menu 'Timer frequency'
-          # Ini adalah cara teraman untuk membersihkan semua definisi HZ yang lama.
+          # Hapus seluruh blok menu 'Timer frequency' (Solusi teraman untuk menghindari Error 2)
           sed -i '/menu "Timer frequency"/,/endmenu/d' $HZ_KCONFIG
 
-          # Tambahkan kembali blok yang dimodifikasi dengan HZ_500 sebagai default tunggal.
-          # Kode ini menggantikan seluruh konten menu HZ.
+          # Tambahkan kembali blok yang dimodifikasi. Konten di bawah ini HARUS dimulai tanpa spasi/tab.
           cat >> $HZ_KCONFIG <<EOF
           menu "Timer frequency"
 
           config HZ_500
-	        bool "500 HZ"
-	        default y
+	      bool "500 HZ"
+	      default y
+         config HZ
+	      int
+	      default 500 if HZ_500
+	      default 300 if HZ_300
+	      default 250 if HZ_250
+	      default 100 if HZ_100
+          endmenu
+          EOF
+          echo "✅ Kconfig.hz berhasil dimodifikasi."
 
-          config HZ
-	        int
-	        default 500 if HZ_500
-	        default 300 if HZ_300
-	        default 250 if HZ_250
-	        default 100 if HZ_100
-          echo "Kconfig.hz berhasil dimodifikasi. Sekarang KernelSU-Next harus memakai 500Hz."
+      # =======================================================
+      # --- END HZ FIX ---
+      # =======================================================
+      
+      # ... (Langkah selanjutnya)
 
 
       - name: Inject Kernel Configs
