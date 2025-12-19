@@ -7,7 +7,7 @@ on:
       kernel_name:
         description: 'Custom Kernel Name'
         required: false
-        default: 'Elysium'
+        default: ''
         type: string
       clang_version:
         description: 'Select Clang Version'
