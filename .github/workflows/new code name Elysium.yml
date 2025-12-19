@@ -159,8 +159,14 @@ jobs:
           # Konfigurasi KSU NEXT (Kprobes)
           CONFIG_KSU=y
           CONFIG_KPM=n
-          CONFIG_KSU_MANUAL_HOOK=n
-          CONFIG_KSU_KPROBES_HOOK=y
+          # TURN OFF KPROBES
+          CONFIG_KSU_KPROBES=n
+          CONFIG_KPROBES=n
+          CONFIG_HAVE_KPROBES=n
+          CONFIG_KPROBE_EVENTS=n
+          # ACTIVE  MANUAL SYSCALL HOOK
+          CONFIG_KSU_MANUAL_HOOK=y
+          CONFIG_KSU_SYSCALL_HOOK=y          
           # Tambahan SusFS (PENTING)
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SUS_PATH=y
