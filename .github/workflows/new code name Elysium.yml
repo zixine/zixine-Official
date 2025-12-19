@@ -83,6 +83,35 @@ jobs:
           echo "🧩 Menambahkan KernelSU-Next dengan Kprobes Hook"
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
           echo "✅ KernelSU-Next added"
+          
+      - name: Setup SusFS
+        working-directory: gki/common
+        run: |
+          echo "KSU_SUSFS Setup Started..."
+          
+          # 1. Unduh Header SusFS (Wajib)
+          curl -LSs "https://gitlab.com/simonpunk/susfs4ksu/-/raw/gki-android12-5.10/include/linux/susfs.h" -o include/linux/susfs.h
+          
+          # 2. Unduh dan Terapkan Patch SusFS
+          # Kita gunakan patch untuk kernel 5.10
+          curl -LSs "https://gitlab.com/simonpunk/susfs4ksu/-/raw/gki-android12-5.10/kernel_patches/5.10/510_susfs.patch" -o susfs.patch
+          
+          echo "Applying SusFS patch..."
+          patch -p1 < susfs.patch || {
+            echo "⚠️ Patch gagal otomatis, mencoba dengan --fuzz..."
+            patch -p1 --fuzz=3 < susfs.patch
+          }
+          
+          # 3. Unduh Patch integrasi untuk KernelSU-Next
+          # Ini penting agar SusFS bisa bekerja sinkron dengan KSU
+          curl -LSs "https://gitlab.com/simonpunk/susfs4ksu/-/raw/gki-android12-5.10/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" -o ksu_susfs.patch
+          
+          echo "Applying KSU-SusFS integration patch..."
+          patch -p1 < ksu_susfs.patch
+          
+          rm susfs.patch ksu_susfs.patch
+          echo "✅ SusFS integrated successfully"
+          
 
       - name: Apply common fixes
         working-directory: gki/common
@@ -132,6 +161,12 @@ jobs:
           CONFIG_KPM=n
           CONFIG_KSU_MANUAL_HOOK=n
           CONFIG_KSU_KPROBES_HOOK=y
+          # Tambahan SusFS (PENTING)
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
           # Add additional tmpfs config setting
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
