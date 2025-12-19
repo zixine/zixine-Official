@@ -7,7 +7,7 @@ on:
       kernel_name:
         description: 'Custom Kernel Name'
         required: false
-        default: ''
+        default: 'Elysium'
         type: string
       clang_version:
         description: 'Select Clang Version'
@@ -73,31 +73,37 @@ jobs:
       - name: Setup KernelSU-Next
         working-directory: gki/common
         run: |
-          # Menggunakan legacy setup untuk KernelSU-Next
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
           echo "✅ KernelSU-Next added"
+
+      - name: Apply Manual Syscall Hook Patch
+        working-directory: gki/common
+        run: |
+          echo "🛠️ Patching manual syscall hooks to fix 'No hooks' error..."
+          # Script ini menyisipkan hook manual agar KernelSU bisa bekerja tanpa Kprobes
+          curl -LSs "https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/refs/heads/mainline/Patches/syscall_hook_patches.sh" | bash
+          echo "✅ Manual hooks applied"
 
       - name: Setup SusFS Integration
         working-directory: gki/common
         run: |
           echo "🛠️ Integrating SusFS components..."
-          # 1. Unduh Header SusFS (Wajib ada untuk kompilasi fs/readdir.c dan kernel/sys.c)
+          # 1. Unduh Header SusFS
           curl -LSs "https://raw.githubusercontent.com/simonpunk/susfs4ksu/gki-android12-5.10/include/linux/susfs.h" -o include/linux/susfs.h
           
-          # 2. Gunakan patch lokal dari repo kamu (Mencegah error 'garbage found')
+          # 2. Ambil file patch lokal (Menghindari error garbage found)
           if [ -f "../../susfs.patch" ]; then
             cp ../../susfs.patch .
-            echo "Applying SusFS patch..."
-            # Menerapkan perubahan pada fs/Makefile, fs/dcache.c, fs/namei.c, dll
+            echo "Applying SusFS patch to filesystem..."
             patch -p1 < susfs.patch || patch -p1 --fuzz=3 < susfs.patch
           else
-            echo "❌ Error: susfs.patch tidak ditemukan di root repo kamu!"
+            echo "❌ Error: susfs.patch tidak ditemukan!"
             exit 1
           fi
           
-          # 3. Patch integrasi khusus KernelSU-SusFS
+          # 3. Patch integrasi KernelSU-SusFS
           curl -LSs "https://raw.githubusercontent.com/simonpunk/susfs4ksu/gki-android12-5.10/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" -o ksu_susfs.patch
-          patch -p1 < ksu_susfs.patch || echo "⚠️ KSU-SusFS integration patch skipped."
+          patch -p1 < ksu_susfs.patch || echo "⚠️ KSU-SusFS patch failed, continue anyway."
           
           rm -f susfs.patch ksu_susfs.patch
 
@@ -130,9 +136,17 @@ jobs:
         run: |
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
           cat >> $DEFCONFIG <<EOF
-          # Konfigurasi KSU NEXT (Kprobes)
+          # KernelSU
           CONFIG_KSU=y
-          CONFIG_KSU_MANUAL_HOOK=n
+          # TURN OFF KPROBES
+          CONFIG_KSU_KPROBES=n
+          CONFIG_KPROBES=n
+          CONFIG_HAVE_KPROBES=n
+          CONFIG_KPROBE_EVENTS=n
+          # ACTIVE MANUAL SYSCALL HOOK (Fixes: No hooks were defined)
+          CONFIG_KSU_MANUAL_HOOK=y
+          CONFIG_KSU_SYSCALL_HOOK=y
+          # SusFS Configs
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SUS_PATH=y
           CONFIG_KSU_SUSFS_SUS_MOUNT=y
@@ -161,9 +175,7 @@ jobs:
           CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
           CONFIG_SCHED_TUNE=y
           CONFIG_MQ_IOSCHED_KYBER=y
-          CONFIG_DEFAULT_IOSCHED="kyber"
           CONFIG_MQ_IOSCHED_BFQ=y
-          CONFIG_DEFAULT_MQ_IOSCHED_BFQ=n
           CONFIG_IOSCHED_BFQ=y
           CONFIG_BFQ_GROUP_IOSCHED=y
           CONFIG_ZRAM=y
