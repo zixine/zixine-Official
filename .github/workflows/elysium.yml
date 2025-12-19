@@ -81,22 +81,23 @@ jobs:
         working-directory: gki/common
         run: |
           echo "🛠️ Integrating SusFS components..."
-          # 1. Unduh Header SusFS (Wajib ada)
+          # 1. Unduh Header SusFS (Wajib ada untuk kompilasi fs/readdir.c dan kernel/sys.c)
           curl -LSs "https://raw.githubusercontent.com/simonpunk/susfs4ksu/gki-android12-5.10/include/linux/susfs.h" -o include/linux/susfs.h
           
           # 2. Gunakan patch lokal dari repo kamu (Mencegah error 'garbage found')
           if [ -f "../../susfs.patch" ]; then
             cp ../../susfs.patch .
             echo "Applying SusFS patch..."
+            # Menerapkan perubahan pada fs/Makefile, fs/dcache.c, fs/namei.c, dll
             patch -p1 < susfs.patch || patch -p1 --fuzz=3 < susfs.patch
           else
-            echo "❌ Error: susfs.patch tidak ditemukan di root repo!"
+            echo "❌ Error: susfs.patch tidak ditemukan di root repo kamu!"
             exit 1
           fi
           
           # 3. Patch integrasi khusus KernelSU-SusFS
           curl -LSs "https://raw.githubusercontent.com/simonpunk/susfs4ksu/gki-android12-5.10/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" -o ksu_susfs.patch
-          patch -p1 < ksu_susfs.patch || echo "⚠️ KSU-SusFS patch skip."
+          patch -p1 < ksu_susfs.patch || echo "⚠️ KSU-SusFS integration patch skipped."
           
           rm -f susfs.patch ksu_susfs.patch
 
@@ -132,12 +133,16 @@ jobs:
           
           # KernelSU-Next Configuration
           CONFIG_KSU=y
-          CONFIG_KSU_MANUAL_HOOK=y
           
-          # Menonaktifkan Kprobes sesuai permintaan
+          # TURN OFF KPROBES
           CONFIG_KPROBES=n
           CONFIG_HAVE_KPROBES=n
           CONFIG_KPROBE_EVENTS=n
+          CONFIG_KSU_KPROBES=n
+          
+          # ACTIVE MANUAL SYSCALL HOOK (Sempurna agar tidak error No Hooks)
+          CONFIG_KSU_MANUAL_HOOK=y
+          CONFIG_KSU_SYSCALL_HOOK=y
           
           # Konfigurasi SusFS
           CONFIG_KSU_SUSFS=y
@@ -149,7 +154,7 @@ jobs:
           CONFIG_KSU_SUSFS_SUS_SU=y
           CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
           
-          # Optimasi Tambahan
+          # Gaming Optimization
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           CONFIG_TCP_CONG_BBR=y
