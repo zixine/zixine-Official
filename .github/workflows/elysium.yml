@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       kernel_name:
-        description: 'Custom Kernel Name (Leave empty for default)'
+        description: 'Custom Kernel Name'
         required: false
         default: ''
         type: string
@@ -81,21 +81,24 @@ jobs:
         working-directory: gki/common
         run: |
           echo "🛠️ Integrating SusFS components..."
-          # 1. Unduh Header SusFS (Dibutuhkan untuk kompilasi readdir dan sys)
+          # 1. Unduh Header SusFS (Wajib ada)
           curl -LSs "https://raw.githubusercontent.com/simonpunk/susfs4ksu/gki-android12-5.10/include/linux/susfs.h" -o include/linux/susfs.h
           
-          # 2. Salin file patch lokal dari repositori kamu
-          cp ../../susfs.patch .
+          # 2. Gunakan patch lokal dari repo kamu (Mencegah error 'garbage found')
+          if [ -f "../../susfs.patch" ]; then
+            cp ../../susfs.patch .
+            echo "Applying SusFS patch..."
+            patch -p1 < susfs.patch || patch -p1 --fuzz=3 < susfs.patch
+          else
+            echo "❌ Error: susfs.patch tidak ditemukan di root repo!"
+            exit 1
+          fi
           
-          # 3. Terapkan patch utama SusFS pada sistem file kernel
-          echo "Applying SusFS modifications..."
-          patch -p1 < susfs.patch || patch -p1 --fuzz=3 < susfs.patch
-          
-          # 4. Patch integrasi khusus KernelSU-SusFS
+          # 3. Patch integrasi khusus KernelSU-SusFS
           curl -LSs "https://raw.githubusercontent.com/simonpunk/susfs4ksu/gki-android12-5.10/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" -o ksu_susfs.patch
-          patch -p1 < ksu_susfs.patch || echo "⚠️ KSU-SusFS integration failed, skipping."
+          patch -p1 < ksu_susfs.patch || echo "⚠️ KSU-SusFS patch skip."
           
-          rm susfs.patch ksu_susfs.patch
+          rm -f susfs.patch ksu_susfs.patch
 
       - name: Apply common fixes
         working-directory: gki/common
@@ -127,19 +130,15 @@ jobs:
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
           cat >> $DEFCONFIG <<EOF
           
-          # KernelSU
+          # KernelSU-Next Configuration
           CONFIG_KSU=y
+          CONFIG_KSU_MANUAL_HOOK=y
           
-          # TURN OFF KPROBES
-          CONFIG_KSU_KPROBES=n
+          # Menonaktifkan Kprobes sesuai permintaan
           CONFIG_KPROBES=n
           CONFIG_HAVE_KPROBES=n
           CONFIG_KPROBE_EVENTS=n
           
-          # ACTIVE MANUAL SYSCALL HOOK
-          CONFIG_KSU_MANUAL_HOOK=y
-          CONFIG_KSU_SYSCALL_HOOK=y
-
           # Konfigurasi SusFS
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SUS_PATH=y
@@ -150,13 +149,12 @@ jobs:
           CONFIG_KSU_SUSFS_SUS_SU=y
           CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
           
-          # Optimasi Gaming & Jaringan
+          # Optimasi Tambahan
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           CONFIG_TCP_CONG_BBR=y
           CONFIG_DEFAULT_BBR=y
           CONFIG_HZ_300=y
-          CONFIG_ZRAM=y
           EOF
 
       - name: Set version
