@@ -135,10 +135,10 @@ jobs:
           CONFIG_KSU=y
           
           # TURN OFF KPROBES
-          CONFIG_KPROBES=n
-          CONFIG_HAVE_KPROBES=n
-          CONFIG_KPROBE_EVENTS=n
-          CONFIG_KSU_KPROBES=n
+          CONFIG_KPROBES=y
+          CONFIG_HAVE_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_KSU_KPROBES=y
           
           # ACTIVE MANUAL SYSCALL HOOK (Sempurna agar tidak error No Hooks)
           CONFIG_KSU_MANUAL_HOOK=y
