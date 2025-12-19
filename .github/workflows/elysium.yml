@@ -1,0 +1,196 @@
+# KernelSU-next with Manual Hook & SusFS Integration
+name: Build Elysium Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_name:
+        description: 'Custom Kernel Name (Leave empty for default)'
+        required: false
+        default: ''
+        type: string
+      clang_version:
+        description: 'Select Clang Version'
+        required: true
+        type: choice
+        options:
+          - 'r536225 (Clang 19)'
+          - 'r547379 (Clang 20)'
+
+jobs:
+  build:
+    name: Build Kernel
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Free disk space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          swap-size-mb: 10240
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "zixine"
+          git config --global user.email "waheid005@gmail.com"
+
+      - name: Install build tools
+        run: |
+          sudo apt update && sudo apt upgrade -y
+          sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
+            libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld
+
+      - name: Init & Sync GKI
+        run: |
+          mkdir gki && cd gki
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
+          repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
+
+      - name: Apply Rama patch
+        working-directory: gki/common
+        run: |
+          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/881fa16.patch" -o rama.patch
+          if git am -3 < rama.patch; then
+            echo "✅ Rama patch applied"
+          else
+            git am --abort
+            patch -p1 --fuzz=3 < rama.patch || true
+          fi
+          rm rama.patch
+
+      - name: Tweak build config
+        run: |
+          sed -i '2d' gki/common/build.config.gki
+
+      - name: Setup KernelSU-Next
+        working-directory: gki/common
+        run: |
+          # Menggunakan legacy setup untuk KernelSU-Next
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+          echo "✅ KernelSU-Next added"
+
+      - name: Setup SusFS Integration
+        working-directory: gki/common
+        run: |
+          echo "🛠️ Integrating SusFS components..."
+          # 1. Unduh Header SusFS (Dibutuhkan untuk kompilasi readdir dan sys)
+          curl -LSs "https://raw.githubusercontent.com/simonpunk/susfs4ksu/gki-android12-5.10/include/linux/susfs.h" -o include/linux/susfs.h
+          
+          # 2. Salin file patch lokal dari repositori kamu
+          cp ../../susfs.patch .
+          
+          # 3. Terapkan patch utama SusFS pada sistem file kernel
+          echo "Applying SusFS modifications..."
+          patch -p1 < susfs.patch || patch -p1 --fuzz=3 < susfs.patch
+          
+          # 4. Patch integrasi khusus KernelSU-SusFS
+          curl -LSs "https://raw.githubusercontent.com/simonpunk/susfs4ksu/gki-android12-5.10/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" -o ksu_susfs.patch
+          patch -p1 < ksu_susfs.patch || echo "⚠️ KSU-SusFS integration failed, skipping."
+          
+          rm susfs.patch ksu_susfs.patch
+
+      - name: Apply common fixes
+        working-directory: gki/common
+        run: |
+          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | git am -3 || {
+             curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1
+          }
+
+      - name: Fix Stack Protector
+        working-directory: gki/common
+        run: |
+          sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
+          echo "# CONFIG_STACKPROTECTOR_PER_TASK is not set" >> arch/arm64/configs/gki_defconfig
+
+      - name: Patch module & DRM (Xiaomi Compat)
+        working-directory: gki/common
+        run: |
+          sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
+          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
+          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
+
+      - name: Remove check_defconfig
+        run: |
+          sed -i 's/check_defconfig//' gki/common/build.config.gki
+
+      - name: Inject Kernel Configs
+        working-directory: gki/common
+        run: |
+          DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          cat >> $DEFCONFIG <<EOF
+          
+          # KernelSU
+          CONFIG_KSU=y
+          
+          # TURN OFF KPROBES
+          CONFIG_KSU_KPROBES=n
+          CONFIG_KPROBES=n
+          CONFIG_HAVE_KPROBES=n
+          CONFIG_KPROBE_EVENTS=n
+          
+          # ACTIVE MANUAL SYSCALL HOOK
+          CONFIG_KSU_MANUAL_HOOK=y
+          CONFIG_KSU_SYSCALL_HOOK=y
+
+          # Konfigurasi SusFS
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_SUS_SU=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          
+          # Optimasi Gaming & Jaringan
+          CONFIG_TMPFS_XATTR=y
+          CONFIG_TMPFS_POSIX_ACL=y
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_DEFAULT_BBR=y
+          CONFIG_HZ_300=y
+          CONFIG_ZRAM=y
+          EOF
+
+      - name: Set version
+        working-directory: gki/common
+        run: |
+          echo "" > scripts/setlocalversion
+          KERNEL_NAME="${{ github.event.inputs.kernel_name }}"
+          if [ -n "$KERNEL_NAME" ]; then
+             sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$KERNEL_NAME/" Makefile
+          fi
+
+      - name: Setup Clang
+        working-directory: gki
+        run: |
+          mkdir -p prebuilts-master/clang/host/linux-x86
+          if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
+            CLANG_VER="clang-r536225"
+            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
+          else
+            CLANG_VER="clang-r547379"
+            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
+          fi
+          mkdir -p prebuilts-master/clang/host/linux-x86/$CLANG_VER
+          curl -L "${CLANG_URL}" | tar -xz -C prebuilts-master/clang/host/linux-x86/$CLANG_VER
+          ln -sf $CLANG_VER prebuilts-master/clang/host/linux-x86/clang-r416183b
+
+      - name: Compile
+        working-directory: gki
+        run: |
+          LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ github.event.inputs.kernel_name }}-Kernel
+          path: gki/out/android12-5.10/common/arch/arm64/boot/Image
