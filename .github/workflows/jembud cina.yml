@@ -1,4 +1,4 @@
-name: Build GKI 5.10 + KernelSU-Next + SusFS
+name: Build GKI 5.10 Ultimate (Selector Mode)
 
 on:
   workflow_dispatch:
@@ -6,17 +6,28 @@ on:
       kernel_name:
         description: 'Nama Kernel (Opsional)'
         required: false
-        default: ''
+        default: 'Elysium'
         type: string
-      use_kprobes:
-        description: 'Gunakan Kprobes? (Uncheck untuk Manual Hooks)'
+      clang_version:
+        description: 'Versi Clang'
         required: true
-        type: boolean
-        default: false
+        type: choice
+        default: 'r536225'
+        options:
+          - 'r536225 (Clang 19 - Stabil)'
+          - 'r547379 (Clang 20 - Eksperimental)'
+      hook_method:
+        description: 'Metode Hook (SusFS = Privacy, KProbes = Standard)'
+        required: true
+        type: choice
+        default: 'susfs'
+        options:
+          - 'susfs'
+          - 'kprobes'
 
 jobs:
   build:
-    name: Build Kernel 5.10
+    name: Build Kernel (${{ inputs.hook_method }})
     runs-on: ubuntu-22.04
 
     steps:
@@ -49,80 +60,113 @@ jobs:
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
           repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
 
-      - name: Setup KernelSU-Next (Dev-SusFS Branch)
+      - name: Apply Rama Patch (Fixes & Features)
         working-directory: gki/common
         run: |
-          echo "🛠️ Installing KernelSU-Next (SusFS Variant)..."
-          # Menggunakan script installer dari linastorvaldz sesuai request
-          curl -LSs "https://raw.githubusercontent.com/linastorvaldz/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
+          echo "⬇️ Downloading Rama Patch..."
+          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/881fa16.patch" -o rama.patch
+          
+          echo "🩹 Applying Patch..."
+          # Coba git am dulu (lebih rapi), kalau gagal pakai patch biasa (lebih maksa)
+          if git am -3 < rama.patch; then
+            echo "✅ git am success"
+          else
+            git am --abort
+            echo "⚠️ git am failed, forcing with patch -p1..."
+            patch -p1 --fuzz=3 < rama.patch || true
+          fi
+          rm rama.patch
 
-      - name: Setup SusFS (Kernel Side)
+      - name: Setup KernelSU-Next
+        working-directory: gki/common
+        run: |
+          echo "🧹 Cleaning old drivers..."
+          rm -rf drivers/kernelsu drivers/staging/kernelsu KernelSU KernelSU-Next
+          
+          echo "⬇️ Installing KernelSU-Next (Dev-SusFS Branch)..."
+          # Menggunakan script installer resmi linastorvaldz branch dev-susfs
+          curl -LSs "https://raw.githubusercontent.com/linastorvaldz/KernelSU-Next/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
+          
+          # SAFETY: Pastikan folder bernama 'KernelSU' ada, karena patch SusFS mencarinya di sana
+          if [ -d "KernelSU-Next" ] && [ ! -d "KernelSU" ]; then
+            echo "🔗 Symlinking KernelSU-Next -> KernelSU"
+            ln -s KernelSU-Next KernelSU
+          fi
+
+      - name: Setup Hook Method (SusFS or KProbes)
         working-directory: gki
         run: |
-          echo "🛠️ Downloading & Patching SusFS for GKI 5.10..."
+          HOOK="${{ inputs.hook_method }}"
+          echo "🎯 Selected Hook Method: $HOOK"
           
-          # 1. Clone SusFS Repo
-          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu -b gki-android12-5.10 susfs4ksu
-          
-          # 2. Copy Files (Kernel Side)
-          cp -R susfs4ksu/kernel_patches/fs/* common/fs/
-          cp -R susfs4ksu/kernel_patches/include/* common/include/
-          
-          # 3. Apply Main SusFS Patch
-          cd common
-          # Patch utama untuk 5.10
-          patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || { echo "❌ SusFS Main Patch Failed"; exit 1; }
-          
-          # 4. Apply KSU Integration Patch (Validasi path KSU)
-          # Karena kita pakai KernelSU-Next, folder-nya mungkin 'KernelSU-Next' atau 'KernelSU' tergantung setup.sh
-          # Biasanya setup.sh membuat symlink atau rename ke KernelSU. Kita cek.
-          if [ -d "KernelSU-Next" ]; then
-             KSU_DIR="KernelSU-Next"
+          if [ "$HOOK" == "susfs" ]; then
+            echo "🚀 Setting up SusFS..."
+            git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu -b gki-android12-5.10 susfs4ksu
+            
+            # Copy file header & fs
+            cp -R susfs4ksu/kernel_patches/fs/* common/fs/
+            cp -R susfs4ksu/kernel_patches/include/* common/include/
+            
+            # Apply Patch Kernel
+            cd common
+            patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || { echo "❌ SusFS Kernel Patch Failed"; exit 1; }
+            
+            # Apply Patch KSU Integration
+            # Note: Kita patch folder 'KernelSU' (yang sudah di-symlink tadi)
+            if [ -f "../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" ]; then
+               patch -p1 < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "⚠️ KSU Patch warning (Mungkin sudah applied)"
+            fi
+            
           else
-             KSU_DIR="KernelSU"
+            echo "ℹ️ Using Standard KProbes mode. Skipping SusFS patches."
           fi
-          
-          echo "Applying SusFS integration to $KSU_DIR..."
-          # Patch 10_enable_susfs_for_ksu.patch biasanya menargetkan path 'KernelSU/'. 
-          # Jika folder bernama KernelSU-Next, patch mungkin perlu penyesuaian path atau kita symlink sementara.
-          # Cara paling aman: Patch manual atau pastikan patch sesuai.
-          # Patch bawaan Simonpunk menargetkan 'KernelSU/'.
-          
-          patch -p1 < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "⚠️ Patch KSU Integration warning (Mungkin sudah applied oleh setup.sh dev-susfs? Cek log.)"
 
-      - name: Apply Recommended Fixes & Tweaks
+      - name: Apply Extra Fixes (Stack Protector & Xiaomi)
         working-directory: gki/common
         run: |
-          # Fix Stack Protector
+          # Fix Stack Protector (Penyebab bootloop di beberapa device)
           sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
           
-          # Fix Xiaomi Compatibility (Module & DRM)
+          # Fix Xiaomi Module & DRM
           sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
           sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
 
-      - name: Inject Configuration
+      - name: Apply Syscall Hook Script (JackA1ltman)
+        working-directory: gki/common
+        run: |
+          # Script ini berguna buat kernel yang "bandel" gak mau nge-hook
+          echo "🩹 Applying JackA1ltman Syscall Hooks..."
+          curl -o syscall_hook.sh https://raw.githubusercontent.com/JackA1ltman/NonGKI_Kernel_Build_2nd/refs/heads/mainline/Patches/syscall_hook_patches.sh
+          chmod +x syscall_hook.sh
+          ./syscall_hook.sh || echo "⚠️ Syscall hook script warning (lanjut build)"
+
+      - name: Inject Configuration (Smart Logic)
         working-directory: gki/common
         run: |
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          HOOK="${{ inputs.hook_method }}"
           
-          # Bersihkan config KSU lama jika ada
+          # 1. Bersihkan config bentrok
           sed -i '/CONFIG_KSU/d' $DEFCONFIG
           sed -i '/CONFIG_KPROBES/d' $DEFCONFIG
+          sed -i '/CONFIG_HAVE_KPROBES/d' $DEFCONFIG
+          sed -i '/CONFIG_KSU_SUSFS/d' $DEFCONFIG
           
+          # 2. Config Dasar
           cat >> $DEFCONFIG <<EOF
-          
-          # --- KernelSU-Next Configs ---
           CONFIG_KSU=y
+          CONFIG_TMPFS_XATTR=y
+          CONFIG_TMPFS_POSIX_ACL=y
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_DEFAULT_BBR=y
+          CONFIG_ZRAM=y
+          EOF
           
-          # --- Manual Hooks (Safe Mode for GKI) ---
-          CONFIG_KSU_KPROBES=n
-          CONFIG_KPROBES=n
-          CONFIG_HAVE_KPROBES=n
-          CONFIG_KPROBE_EVENTS=n
-          CONFIG_KSU_MANUAL_HOOK=y
-          CONFIG_KSU_SYSCALL_HOOK=y
-          
-          # --- SusFS Configs ---
+          # 3. Config Percabangan (SusFS vs KProbes)
+          if [ "$HOOK" == "susfs" ]; then
+            echo "writing susfs config..."
+            cat >> $DEFCONFIG <<EOF
+          # --- SUSFS MODE ---
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SUS_PATH=y
           CONFIG_KSU_SUSFS_SUS_MOUNT=y
@@ -131,63 +175,71 @@ jobs:
           CONFIG_KSU_SUSFS_SPOOF_UNAME=y
           CONFIG_KSU_SUSFS_SUS_SU=y
           CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
-          
-          # --- Performance & Tweaks ---
-          CONFIG_HZ_300=y
-          CONFIG_CPU_FREQ=y
-          CONFIG_HIGH_RES_TIMERS=y
-          CONFIG_CLEANCACHE=y
-          CONFIG_IP_NF_TARGET_TTL=y
-          CONFIG_IP6_NF_TARGET_HL=y
-          CONFIG_IP6_NF_MATCH_HL=y
-          CONFIG_TCP_CONG_ADVANCED=y
-          CONFIG_TCP_CONG_BBR=y
-          CONFIG_NET_SCH_FQ=y
-          CONFIG_TCP_CONG_BIC=n
-          CONFIG_TCP_CONG_WESTWOOD=n
-          CONFIG_TCP_CONG_HTCP=n
-          CONFIG_DEFAULT_BBR=y
-          CONFIG_TMPFS_XATTR=y
-          CONFIG_TMPFS_POSIX_ACL=y
+          # Paksa Manual Hook untuk SusFS (Lebih stabil)
+          CONFIG_KSU_MANUAL_HOOK=y
+          CONFIG_KSU_SYSCALL_HOOK=y
+          CONFIG_KSU_KPROBES=n
+          CONFIG_KPROBES=n
           EOF
-          
-          # Opsional: Jika user mencentang Use Kprobes di input
-          if [ "${{ github.event.inputs.use_kprobes }}" == "true" ]; then
-            echo "Re-enabling KProbes..."
-            sed -i 's/CONFIG_KSU_KPROBES=n/CONFIG_KSU_KPROBES=y/' $DEFCONFIG
-            sed -i 's/CONFIG_KPROBES=n/CONFIG_KPROBES=y/' $DEFCONFIG
-            sed -i 's/CONFIG_HAVE_KPROBES=n/CONFIG_HAVE_KPROBES=y/' $DEFCONFIG
-            sed -i 's/CONFIG_KPROBE_EVENTS=n/CONFIG_KPROBE_EVENTS=y/' $DEFCONFIG
-            sed -i 's/CONFIG_KSU_MANUAL_HOOK=y/CONFIG_KSU_MANUAL_HOOK=n/' $DEFCONFIG
+          else
+            echo "writing kprobes config..."
+            cat >> $DEFCONFIG <<EOF
+          # --- KPROBES MODE ---
+          CONFIG_KSU_SUSFS=n
+          CONFIG_KSU_MANUAL_HOOK=n
+          # Paksa Kprobes Aktif
+          CONFIG_KSU_KPROBES=y
+          CONFIG_KPROBES=y
+          CONFIG_HAVE_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          EOF
           fi
 
-      - name: Set Kernel Version Name
+      - name: Set Kernel Version
         working-directory: gki/common
         run: |
-          KERNEL_NAME="${{ github.event.inputs.kernel_name }}"
+          KERNEL_NAME="${{ inputs.kernel_name }}"
+          HOOK="${{ inputs.hook_method }}"
+          
+          # Format nama: NamaKernel-Metode (Contoh: Elysium-SusFS)
+          SUFFIX="-$KERNEL_NAME-$HOOK"
+          
           echo "" > scripts/setlocalversion
-          sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$KERNEL_NAME/" Makefile
+          sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = $SUFFIX/" Makefile
 
-      - name: Setup Clang (Android 12 Standard)
+      - name: Setup Clang
         working-directory: gki
         run: |
           mkdir -p prebuilts-master/clang/host/linux-x86
-          # Menggunakan Clang r416183b yang umum untuk GKI 5.10
-          CLANG_VER="clang-r416183b"
-          CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master-kernel-build-2021/$CLANG_VER.tar.gz"
           
+          if [ "${{ inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
+             CLANG_VER="clang-r536225"
+             CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
+          else
+             CLANG_VER="clang-r547379"
+             CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
+          fi
+          
+          echo "⬇️ Downloading $CLANG_VER..."
           mkdir -p prebuilts-master/clang/host/linux-x86/$CLANG_VER
           curl -L "${CLANG_URL}" | tar -xz -C prebuilts-master/clang/host/linux-x86/$CLANG_VER
+          
+          # Trik Symlink: GKI build system biasanya nyari clang versi r416183b
+          # Kita tipu dengan symlink ke clang baru yang kita download
+          rm -rf prebuilts-master/clang/host/linux-x86/clang-r416183b
+          ln -sf $CLANG_VER prebuilts-master/clang/host/linux-x86/clang-r416183b
 
       - name: Build Kernel
         working-directory: gki
         run: |
-          # Build process
+          # Pastikan PATH mengarah ke clang yang benar
+          export PATH=$PWD/prebuilts-master/clang/host/linux-x86/clang-r416183b/bin:$PATH
+          
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: ${{ github.event.inputs.kernel_name }}-Image
+          name: ${{ inputs.kernel_name }}-${{ inputs.hook_method }}-Image
           path: gki/out/android12-5.10/common/arch/arm64/boot/Image
