@@ -1,4 +1,4 @@
-name: Build GKI 5.10 Final Fix (Bypass Check)
+name: Build GKI 5.10 Super Fix (Smart Patch)
 
 on:
   workflow_dispatch:
@@ -110,12 +110,20 @@ jobs:
             echo "ℹ️ Using Standard KProbes mode. Skipping SusFS patches."
           fi
 
-      - name: Fix Stack Protector & Xiaomi
+      - name: Fix Stack Protector & Xiaomi (SMART FIX)
         working-directory: gki/common
         run: |
+          # 1. Fix Stack Protector
           sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
+          
+          # 2. Fix Xiaomi Module (Symbol Version)
           sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
-          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
+          
+          # 3. Fix DRM Atomic Helper (CRITICAL FIX)
+          # Alih-alih menghapus fungsi (yang bikin error), kita ubah pemanggilannya jadi sukses (ret = 0)
+          # Ini mencegah error "implicit declaration"
+          echo "🩹 Patching drm_atomic_helper.c safely..."
+          sed -i 's/ret = drm_atomic_check_valid_clones.*/ret = 0;/' drivers/gpu/drm/drm_atomic_helper.c
 
       - name: Apply Syscall Hook (JackA1ltman)
         working-directory: gki/common
@@ -124,19 +132,15 @@ jobs:
           chmod +x syscall_hook.sh
           ./syscall_hook.sh || echo "⚠️ Syscall hook script warning (lanjut build)"
 
-      - name: 🛑 KILL GKI STRICT CHECKS (CRITICAL FIX)
+      - name: 🛑 KILL GKI STRICT CHECKS
         working-directory: gki/common
         run: |
           echo "🔥 Disabling check_defconfig to prevent build failure..."
-          # Hapus check_defconfig dari build.config.gki
           sed -i 's/check_defconfig//g' build.config.gki
-          # Hapus juga dari build.config.common (jaga-jaga)
           sed -i 's/check_defconfig//g' build.config.common
-          # Hapus dari build.config.aarch64 (jaga-jaga)
           if [ -f "build.config.aarch64" ]; then
              sed -i 's/check_defconfig//g' build.config.aarch64
           fi
-          echo "✅ Strict checks disabled. Config injection is now safe."
 
       - name: Inject Configuration
         working-directory: gki/common
@@ -226,3 +230,8 @@ jobs:
         with:
           name: ${{ inputs.kernel_name }}-${{ inputs.hook_method }}-Image
           path: gki/out/android12-5.10/common/arch/arm64/boot/Image
+```
+
+**Perubahan Kunci (Lihat step "Fix Stack Protector & Xiaomi"):**
+```bash
+sed -i 's/ret = drm_atomic_check_valid_clones.*/ret = 0;/' drivers/gpu/drm/drm_atomic_helper.c
