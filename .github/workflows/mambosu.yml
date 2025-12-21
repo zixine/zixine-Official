@@ -73,6 +73,12 @@ jobs:
       - name: Delete Line 2 in build.config.gki
         run: |
           sed -i '2d' gki/common/build.config.gki
+
+      - name: kernelsu
+        run: |
+          echo "instal mambosu"
+          curl -LSs "https://raw.githubusercontent.com/raplivx/KernelSU/main/kernel/setup.sh" | bash -s susfs-rksu-master
+          echo "instal sukses"
           
       - name: Apply common fixes
         working-directory: gki/common
