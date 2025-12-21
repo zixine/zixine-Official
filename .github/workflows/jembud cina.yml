@@ -1,4 +1,4 @@
-name: Build GKI 5.10 Super Fix (Smart Patch)
+name: Build GKI 5.10 Final (Xiaomi Patch Style)
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
       kernel_name:
         description: 'Nama Kernel'
         required: false
-        default: 'zixine-Elysium-v1.1-lEGACY.R2'
+        default: 'Elysium'
         type: string
       clang_version:
         description: 'Versi Clang'
@@ -101,29 +101,31 @@ jobs:
             cp -R susfs4ksu/kernel_patches/include/* common/include/
             
             cd common
-            # Patch Kernel Side
             patch -p1 < ../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || { echo "❌ SusFS Kernel Patch Failed"; exit 1; }
-            # Patch KSU Side
             patch -p1 < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || echo "⚠️ KSU Patch warning (Ignore if applied)"
             
           else
             echo "ℹ️ Using Standard KProbes mode. Skipping SusFS patches."
           fi
 
-      - name: Fix Stack Protector & Xiaomi (SMART FIX)
+      - name: Apply Compatibility Patches (Xiaomi & Others)
         working-directory: gki/common
         run: |
+          echo "🩹 Applying Critical Fixes..."
+          
           # 1. Fix Stack Protector
           sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
           
-          # 2. Fix Xiaomi Module (Symbol Version)
+          # 2. Xiaomi Compatibility (Module Version)
           sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
           
-          # 3. Fix DRM Atomic Helper (CRITICAL FIX)
-          # Alih-alih menghapus fungsi (yang bikin error), kita ubah pemanggilannya jadi sukses (ret = 0)
-          # Ini mencegah error "implicit declaration"
-          echo "🩹 Patching drm_atomic_helper.c safely..."
-          sed -i 's/ret = drm_atomic_check_valid_clones.*/ret = 0;/' drivers/gpu/drm/drm_atomic_helper.c
+          # 3. Xiaomi Compatibility (DRM Atomic Helper) - Brutal Delete Style (ala Temanmu)
+          echo "🔥 Removing drm_atomic_check_valid_clones logic..."
+          # Hapus definisi fungsi
+          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
+          # Hapus pemanggilan fungsi (dan return ret di bawahnya jika ada dalam satu blok)
+          # Note: Kita gunakan pola yang lebih aman agar tidak menghapus kode lain
+          sed -i '/ret = drm_atomic_check_valid_clones/d' drivers/gpu/drm/drm_atomic_helper.c
 
       - name: Apply Syscall Hook (JackA1ltman)
         working-directory: gki/common
@@ -135,7 +137,7 @@ jobs:
       - name: 🛑 KILL GKI STRICT CHECKS
         working-directory: gki/common
         run: |
-          echo "🔥 Disabling check_defconfig to prevent build failure..."
+          echo "🔥 Disabling check_defconfig..."
           sed -i 's/check_defconfig//g' build.config.gki
           sed -i 's/check_defconfig//g' build.config.common
           if [ -f "build.config.aarch64" ]; then
@@ -148,13 +150,11 @@ jobs:
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
           HOOK="${{ inputs.hook_method }}"
           
-          # Bersihkan config lama
           sed -i '/CONFIG_KSU/d' $DEFCONFIG
           sed -i '/CONFIG_KPROBES/d' $DEFCONFIG
           sed -i '/CONFIG_HAVE_KPROBES/d' $DEFCONFIG
           sed -i '/CONFIG_KSU_SUSFS/d' $DEFCONFIG
           
-          # Config Global
           cat >> $DEFCONFIG <<EOF
           CONFIG_KSU=y
           CONFIG_TMPFS_XATTR=y
@@ -164,7 +164,6 @@ jobs:
           CONFIG_ZRAM=y
           EOF
           
-          # Config Selector
           if [ "$HOOK" == "susfs" ]; then
             cat >> $DEFCONFIG <<EOF
           CONFIG_KSU_SUSFS=y
@@ -230,3 +229,10 @@ jobs:
         with:
           name: ${{ inputs.kernel_name }}-${{ inputs.hook_method }}-Image
           path: gki/out/android12-5.10/common/arch/arm64/boot/Image
+```
+
+**Perubahan di step "Apply Compatibility Patches":**
+```bash
+# Xiaomi Compatibility (DRM Atomic Helper) - Brutal Delete Style
+sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
+sed -i '/ret = drm_atomic_check_valid_clones/d' drivers/gpu/drm/drm_atomic_helper.c
