@@ -88,7 +88,7 @@ jobs:
         working-directory: gki/common
         run: |
           echo "🧩 Menambahkan MamboSU Susfs Hook"
-          curl -LSs "https://raw.githubusercontent.com/Kingfinik98/MamboSU/refs/heads/master/kernel/setup.sh" | bash -s master
+          curl -LSs "https://raw.githubusercontent.com/raplivx/KernelSU/main/kernel/setup.sh" | bash -s susfs-rksu-master
           echo "✅ MamboSU added"
 
       - name: Apply Compatibility Patches
