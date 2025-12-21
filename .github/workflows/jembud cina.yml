@@ -6,7 +6,7 @@ on:
       kernel_name:
         description: 'Nama Kernel'
         required: false
-        default: 'Elysium'
+        default: 'zixine-Elysium-v1.1-lEGACY.R2'
         type: string
       clang_version:
         description: 'Versi Clang'
