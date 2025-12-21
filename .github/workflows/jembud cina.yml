@@ -229,10 +229,3 @@ jobs:
         with:
           name: ${{ inputs.kernel_name }}-${{ inputs.hook_method }}-Image
           path: gki/out/android12-5.10/common/arch/arm64/boot/Image
-```
-
-**Perubahan di step "Apply Compatibility Patches":**
-```bash
-# Xiaomi Compatibility (DRM Atomic Helper) - Brutal Delete Style
-sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
-sed -i '/ret = drm_atomic_check_valid_clones/d' drivers/gpu/drm/drm_atomic_helper.c
