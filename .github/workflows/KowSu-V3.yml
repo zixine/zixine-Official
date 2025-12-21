@@ -76,13 +76,12 @@ jobs:
           rm -rf clang-r416183b
           ln -sf $CLANG_VER clang-r416183b
 
-      - name: Setup Upstream Rama update 
-        working-directory: gki/common
+      - name: Update kernel source for GKI 5.10
         run: |
-          # Upstream to 5.10.246 logic
-          git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
-          git fetch -j12 rama
-          git checkout -b update-5.10.247 rama/android12-5.10-staging
+          cd gki/common
+          git remote add kingfinik98 https://github.com/Kingfinik98/kernel-android12-5.10.git
+          git fetch -j12 kingfinik98
+          git checkout -b update-mglru kingfinik98/mglru
           
       - name: Setup MamboSU SuSFS Hook
         working-directory: gki/common
