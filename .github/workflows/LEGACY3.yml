@@ -46,8 +46,8 @@ jobs:
 
       - name: Configure Git
         run: |
-          git config --global user.name "titit"
-          git config --global user.email "Kingfinik98@gmail.com"
+          git config --global user.name "zixine"
+          git config --global user.email "waheid005@gmail.com"
 
       - name: Install build tools
         run: |
