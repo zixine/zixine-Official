@@ -84,9 +84,12 @@ jobs:
           git fetch -j12 rama
           git checkout -b update-5.10.247 rama/android12-5.10-staging
           
-          # Setup KernelSU-KowSU
-          rm -rf drivers/staging/kernelsu
-          git clone https://github.com/ramabondanp/KernelSU.git -b main drivers/staging/kernelsu
+      - name: Setup MamboSU SuSFS Hook
+        working-directory: gki/common
+        run: |
+          echo "🧩 Menambahkan MamboSU Susfs Hook"
+          curl -LSs "https://raw.githubusercontent.com/Kingfinik98/MamboSU/refs/heads/master/kernel/setup.sh" | bash -s master
+          echo "✅ MamboSU added"
 
       - name: Apply Compatibility Patches
         working-directory: gki/common
