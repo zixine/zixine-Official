@@ -102,7 +102,7 @@ jobs:
           echo "✅ Existing KernelSU drivers removed"
           
           echo "➡️ Menambahkan KernelSU-Next"
-          curl -LSs ‘https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh’ | bash -s builtin
+          curl -LSs 'https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh' | bash -s builtin
           echo "✅ KernelSU-Next added"
           
           HOOK_METHOD="${{ github.event.inputs.hook_method }}"
