@@ -6,7 +6,7 @@ on:
       kernel_name:
         description: 'Custom Kernel Name (Biarkan kosong untuk default)'
         required: false
-        default: ''
+        default: 'Zixine-GKI'
         type: string
       clang_version:
         description: 'Pilih Versi Clang'
@@ -73,12 +73,10 @@ jobs:
         run: |
           sed -i '2d' gki/common/build.config.gki
 
-      - name: Setup KernelSU-Next & Hook Method
+      - name: Setup SukiSu & Hook Method
         working-directory: gki/common
         run: |
-          echo "🧩 Setup KernelSU-Next dan Hook Method"
-          
-          # Hapus driver lama jika ada
+          echo "🧩 Setup KernelSU-Next"
           for KSU_PATH in drivers/staging/kernelsu drivers/kernelsu KernelSU; do
             if [ -d $KSU_PATH ]; then
               KSU_DIR=$(dirname "$KSU_PATH")
@@ -88,59 +86,31 @@ jobs:
             fi
           done
           
-          # 1. Install sukisu Base
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
           
-          HOOK_METHOD="${{ github.event.inputs.hook_method }}"
-          
-          if [ "$HOOK_METHOD" = "susfs" ]; then
-            echo "➡️ Menambahkan SUSFS support ke KernelSU-Next"
-            # 2. Install SUSFS Support via SukiSU
+          if [ "${{ github.event.inputs.hook_method }}" = "susfs" ]; then
             curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
-            
-            # 3. Clone manual patch susfs (PENTING untuk visibility fix)
             git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 sus
             cp -r sus/kernel_patches/fs .
             cp -r sus/kernel_patches/include .
             patch -p1 < sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
-            
-            # Visibility fix untuk kernel 5.10
             sed -i '1i#include <linux/stat.h>' include/linux/susfs.h
-            echo "✅ SUSFS patched"
           fi
 
-      - name: Fix Stack Protector
-        working-directory: gki/common
-        run: |
-          sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
-          echo "# CONFIG_STACKPROTECTOR_PER_TASK is not set" >> arch/arm64/configs/gki_defconfig
-
-      - name: Patch module & DRM (Xiaomi Compat)
-        working-directory: gki/common
-        run: |
-          sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
-          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
-          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
-
-      - name: Inject All Kernel Configs
+      - name: Inject Kernel Configs
         working-directory: gki/common
         run: |
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
-          HOOK_METHOD="${{ github.event.inputs.hook_method }}"
-          
           cat >> $DEFCONFIG <<EOF
-          # KSU NEXT CONFIG
           CONFIG_KSU=y
           CONFIG_KPM=y
-          CONFIG_KSU_SUSFS_SUS_SU=n
           CONFIG_KSU_INLINE_HOOK=y
           CONFIG_KSU_INLINE_HOOK_TRAMPOLINE=y
           CONFIG_KSU_INLINE_HOOK_TRAMPOLINE_SIZE=64
           CONFIG_KSU_INLINE_HOOK_MANAGER_ONLY=y
           CONFIG_KSU_INLINE_HOOK_WITH_KSU_PATCH=y
           EOF
-          
-          if [ "$HOOK_METHOD" = "susfs" ]; then
+          if [ "${{ github.event.inputs.hook_method }}" = "susfs" ]; then
             cat >> $DEFCONFIG <<EOF
           CONFIG_KSU_SYSCALL_HOOK=n
           CONFIG_KSU_KPROBES_HOOK=n
@@ -149,40 +119,11 @@ jobs:
           CONFIG_KSU_SUSFS_SUS_PATH=y
           CONFIG_KSU_SUSFS_SUS_MOUNT=y
           CONFIG_KSU_SUSFS_SUS_KSTAT_SPOOF_GENERIC=y
-          CONFIG_KSU_SUSFS_SUS_KSTAT=y
           CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
-          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
-          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSTAT=y
-          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
-          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-          CONFIG_KSU_SUSFS_ENABLE_LOG=y
-          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
           EOF
           else
             echo "CONFIG_KSU_SYSCALL_HOOK=y" >> $DEFCONFIG
             echo "CONFIG_KSU_KPROBES_HOOK=y" >> $DEFCONFIG
-            echo "CONFIG_KSU_SUSFS=n" >> $DEFCONFIG
-          fi
-          
-          cat >> $DEFCONFIG <<EOF
-          CONFIG_TMPFS_XATTR=y
-          CONFIG_TMPFS_POSIX_ACL=y
-          CONFIG_TCP_CONG_BBR=y
-          CONFIG_DEFAULT_BBR=y
-          CONFIG_HZ_300=y
-          CONFIG_ZRAM=y
-          EOF
-
-      - name: Set version
-        working-directory: gki/common
-        run: |
-          echo "" > scripts/setlocalversion
-          KERNEL_NAME="${{ github.event.inputs.kernel_name }}"
-          HOOK_METHOD="${{ github.event.inputs.hook_method }}"
-          SUFFIX=$(echo "$HOOK_METHOD" | tr '[:lower:]' '[:upper:]')
-          if [ -n "$KERNEL_NAME" ]; then
-             sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$KERNEL_NAME-$SUFFIX/" Makefile || echo "EXTRAVERSION = -$KERNEL_NAME-$SUFFIX" >> Makefile
           fi
 
       - name: Setup Clang
@@ -203,8 +144,23 @@ jobs:
       - name: Compile
         working-directory: gki
         run: |
+          CLANG_DIR=$(pwd)/prebuilts-master/clang/host/linux-x86/clang-r416183b
+          export PATH="$CLANG_DIR/bin:$PATH"
+          
+          # RAM Monitor
+          (while true; do free -h | grep "Mem:" | awk '{print "RAM: " $3 "/" $2}'; sleep 60; done) &
+          MONITOR_PID=$!
+
           sed -i 's/check_defconfig//' common/build.config.gki
-          LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+          
+          LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 \
+          ARCH=arm64 SUBARCH=arm64 OS=linux LLVM=1 LLVM_IAS=1 \
+          CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- \
+          LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump READELF=llvm-readelf STRIP=llvm-strip \
+          build/build.sh
+
+          kill $MONITOR_PID
 
       - name: Apply KPM Patch
         run: |
@@ -219,5 +175,20 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel-Upstream-5.10.247-${{ github.event.inputs.hook_method }}
+          name: Kernel-Image
           path: gki/out/android12-5.10/common/arch/arm64/boot/Image
+
+      - name: Telegram Notification
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            EMOJI="✅ SUCCESS"
+            MSG="Kernel built successfully!%0A📦 Name: ${{ github.event.inputs.kernel_name }}%0A🔗 Link: [Download](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          else
+            EMOJI="❌ FAILED"
+            MSG="Build failed! Please check logs."
+          fi
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "text=${EMOJI}%0A------------------%0A${MSG}" \
+            -d "parse_mode=Markdown"
