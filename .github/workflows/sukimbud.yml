@@ -143,7 +143,7 @@ jobs:
       - name: Setup Clang (AOSP Path Standard)
         working-directory: gki
         run: |
-          # Buat folder standar yang dicari oleh build.sh
+          # Buat folder standar mutlak
           mkdir -p prebuilts/clang/host/linux-x86/clang-r416183b
           if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
             CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
@@ -155,23 +155,37 @@ jobs:
       - name: Compile
         working-directory: gki
         run: |
-          # Ambil jalur absolut binari clang
-          export CLANG_BIN="$(pwd)/prebuilts/clang/host/linux-x86/clang-r416183b/bin"
+          # 1. Definisikan path absolut binari
+          CLANG_BIN="$(pwd)/prebuilts/clang/host/linux-x86/clang-r416183b/bin"
           
-          # Monitor RAM
+          # 2. Paksa PATH ke level sistem environment GitHub
+          echo "$CLANG_BIN" >> $GITHUB_PATH
+          
+          # 3. Monitor RAM (Background)
           (while true; do free -h | grep "Mem:" | awk '{print "RAM Usage: " $3 "/" $2}'; sleep 60; done) &
           MONITOR_PID=$!
 
-          # Hapus check_defconfig agar build tidak berhenti
+          # 4. Bersihkan Config
           sed -i 's/check_defconfig//' common/build.config.gki
           
-          # EKSEKUSI UTAMA: Masukkan PATH langsung ke depan perintah build.sh
+          # 5. EKSEKUSI: Masukkan variabel ke script build secara eksplisit
+          # Menggunakan CC, LD, AR dsb dengan path lengkap (Absolute Pathing)
           PATH="$CLANG_BIN:$PATH" \
+          REAL_CC="$CLANG_BIN/clang" \
+          CLANG_PATH="$CLANG_BIN" \
           LTO=thin \
           BUILD_CONFIG=common/build.config.gki.aarch64 \
           ARCH=arm64 \
           LLVM=1 \
           LLVM_IAS=1 \
+          CC="$CLANG_BIN/clang" \
+          LD="$CLANG_BIN/ld.lld" \
+          AR="$CLANG_BIN/llvm-ar" \
+          NM="$CLANG_BIN/llvm-nm" \
+          OBJCOPY="$CLANG_BIN/llvm-objcopy" \
+          OBJDUMP="$CLANG_BIN/llvm-objdump" \
+          READELF="$CLANG_BIN/llvm-readelf" \
+          STRIP="$CLANG_BIN/llvm-strip" \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           CROSS_COMPILE=aarch64-linux-android- \
           build/build.sh
@@ -189,7 +203,7 @@ jobs:
         run: |
           if [ "${{ job.status }}" = "success" ]; then
             EMOJI="✅ SUCCESS"
-            MSG="Build Kernel Selesai!%0A📦 Nama: ${{ github.event.inputs.kernel_name }}%0A🔗 [Download Di Sini](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            MSG="Build Kernel Selesai!%0A📦 Nama: ${{ github.event.inputs.kernel_name }}%0A🔗 [Download Image Di Sini](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           else
             EMOJI="❌ FAILED"
             MSG="Build Gagal! Periksa log GitHub Actions."
