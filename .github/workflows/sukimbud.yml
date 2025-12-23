@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       kernel_name:
-        description: 'Custom Kernel Name (Biarkan kosong untuk default)'
+        description: 'Custom Kernel Name'
         required: false
         default: 'Zixine-GKI'
         type: string
@@ -61,47 +61,37 @@ jobs:
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
           repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
 
-      - name: Setup Upstream Rama update 
+      - name: Setup Upstream Rama (5.10.247)
         working-directory: gki/common
         run: |
-          git remote remove rama > /dev/null 2>&1 || true
           git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
           git fetch -j12 rama android12-5.10-staging
           git checkout -f -B update-5.10.247 rama/android12-5.10-staging
 
-      - name: Tweak build config
-        run: |
-          sed -i '2d' gki/common/build.config.gki
-
-      - name: Setup SukiSu & Hook Method
+      - name: Setup SukiSU & SUSFS (Dev Method)
         working-directory: gki/common
         run: |
-          echo "🧩 Setup KernelSU-Next"
-          for KSU_PATH in drivers/staging/kernelsu drivers/kernelsu KernelSU; do
-            if [ -d $KSU_PATH ]; then
-              KSU_DIR=$(dirname "$KSU_PATH")
-              [ -f "$KSU_DIR/Kconfig" ] && sed -i '/kernelsu/d' $KSU_DIR/Kconfig
-              [ -f "$KSU_DIR/Makefile" ] && sed -i '/kernelsu/d' $KSU_DIR/Makefile
-              rm -rf $KSU_PATH
-            fi
-          done
-          
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+          echo "🧩 Installing SukiSU-Next..."
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
           
           if [ "${{ github.event.inputs.hook_method }}" = "susfs" ]; then
-            curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
-            git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 sus
-            cp -r sus/kernel_patches/fs .
-            cp -r sus/kernel_patches/include .
-            patch -p1 < sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
+            echo "🩹 Patching SUSFS Manual..."
+            git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
+            rm -rf sus/.git
+            susfs=sus/kernel_patches
+            cp -r $susfs/fs .
+            cp -r $susfs/include .
+            cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
+            patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
             sed -i '1i#include <linux/stat.h>' include/linux/susfs.h
           fi
 
-      - name: Inject Kernel Configs
+      - name: Inject Full Kernel Configs (Gaming & Power)
         working-directory: gki/common
         run: |
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
           cat >> $DEFCONFIG <<EOF
+          # KSU NEXT CONFIG
           CONFIG_KSU=y
           CONFIG_KPM=y
           CONFIG_KSU_INLINE_HOOK=y
@@ -109,7 +99,22 @@ jobs:
           CONFIG_KSU_INLINE_HOOK_TRAMPOLINE_SIZE=64
           CONFIG_KSU_INLINE_HOOK_MANAGER_ONLY=y
           CONFIG_KSU_INLINE_HOOK_WITH_KSU_PATCH=y
+          
+          # GAMING & PERFORMANCE OPTIMIZATION
+          CONFIG_HZ_300=y
+          CONFIG_SCHED_AUTOGROUP=y
+          CONFIG_SCHED_TUNE=y
+          CONFIG_DEFAULT_BBR=y
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_NET_SCH_FQ=y
+          CONFIG_ZRAM=y
+          CONFIG_ZRAM_WRITEBACK=y
+          CONFIG_CPU_FREQ_GOV_PERFORMANCE=y
+          CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
+          CONFIG_MQ_IOSCHED_KYBER=y
+          CONFIG_MQ_IOSCHED_BFQ=y
           EOF
+          
           if [ "${{ github.event.inputs.hook_method }}" = "susfs" ]; then
             cat >> $DEFCONFIG <<EOF
           CONFIG_KSU_SYSCALL_HOOK=n
@@ -119,63 +124,52 @@ jobs:
           CONFIG_KSU_SUSFS_SUS_PATH=y
           CONFIG_KSU_SUSFS_SUS_MOUNT=y
           CONFIG_KSU_SUSFS_SUS_KSTAT_SPOOF_GENERIC=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
           CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
           EOF
           else
             echo "CONFIG_KSU_SYSCALL_HOOK=y" >> $DEFCONFIG
             echo "CONFIG_KSU_KPROBES_HOOK=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_SUSFS=n" >> $DEFCONFIG
           fi
 
-      - name: Setup Clang
+      - name: Setup Clang (AOSP Path Standard)
         working-directory: gki
         run: |
-          mkdir -p prebuilts-master/clang/host/linux-x86
+          mkdir -p prebuilts/clang/host/linux-x86/clang-r416183b
           if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
-            CLANG_VER="clang-r536225"
             CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
           else
-            CLANG_VER="clang-r547379"
             CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
           fi
-          mkdir -p prebuilts-master/clang/host/linux-x86/$CLANG_VER
-          curl -L "${CLANG_URL}" | tar -xz -C prebuilts-master/clang/host/linux-x86/$CLANG_VER
-          ln -sf $CLANG_VER prebuilts-master/clang/host/linux-x86/clang-r416183b
+          curl -L "${CLANG_URL}" | tar -xz -C prebuilts/clang/host/linux-x86/clang-r416183b
 
       - name: Compile
         working-directory: gki
         run: |
-          CLANG_DIR=$(pwd)/prebuilts-master/clang/host/linux-x86/clang-r416183b
-          export PATH="$CLANG_DIR/bin:$PATH"
-          
-          # RAM Monitor
-          (while true; do free -h | grep "Mem:" | awk '{print "RAM: " $3 "/" $2}'; sleep 60; done) &
+          CLANG_BIN="$(pwd)/prebuilts/clang/host/linux-x86/clang-r416183b/bin"
+          export PATH="$CLANG_BIN:$PATH"
+          (while true; do free -h | grep "Mem:" | awk '{print "RAM Usage: " $3 "/" $2}'; sleep 60; done) &
           MONITOR_PID=$!
-
           sed -i 's/check_defconfig//' common/build.config.gki
           
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 \
-          ARCH=arm64 SUBARCH=arm64 OS=linux LLVM=1 LLVM_IAS=1 \
+          ARCH=arm64 LLVM=1 LLVM_IAS=1 \
           CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- \
-          LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
-          OBJDUMP=llvm-objdump READELF=llvm-readelf STRIP=llvm-strip \
           build/build.sh
-
           kill $MONITOR_PID
 
-      - name: Apply KPM Patch
-        run: |
-          IMG_PATH="gki/out/android12-5.10/common/arch/arm64/boot/Image"
-          if [ -f "$IMG_PATH" ]; then
-            cd $(dirname $IMG_PATH)
-            curl -LSs "https://github.com/SukiSU-Ultra/SukiSU_patch/raw/refs/heads/main/kpm/patch_linux" -o patch
-            chmod +x patch
-            ./patch && [ -f oImage ] && mv -f oImage Image
-          fi
-
-      - name: Upload Artifact
+      - name: Upload Image Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Kernel-Image
+          name: ${{ github.event.inputs.kernel_name }}-Image
           path: gki/out/android12-5.10/common/arch/arm64/boot/Image
 
       - name: Telegram Notification
@@ -183,10 +177,10 @@ jobs:
         run: |
           if [ "${{ job.status }}" = "success" ]; then
             EMOJI="✅ SUCCESS"
-            MSG="Kernel built successfully!%0A📦 Name: ${{ github.event.inputs.kernel_name }}%0A🔗 Link: [Download](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            MSG="Build Kernel Selesai!%0A📦 Nama: ${{ github.event.inputs.kernel_name }}%0A🔗 [Download Image Di Sini](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           else
             EMOJI="❌ FAILED"
-            MSG="Build failed! Please check logs."
+            MSG="Build Gagal! Periksa log GitHub Actions."
           fi
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
             -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
