@@ -143,6 +143,7 @@ jobs:
       - name: Setup Clang (AOSP Path Standard)
         working-directory: gki
         run: |
+          # Buat folder standar yang dicari oleh build.sh
           mkdir -p prebuilts/clang/host/linux-x86/clang-r416183b
           if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
             CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
@@ -154,16 +155,27 @@ jobs:
       - name: Compile
         working-directory: gki
         run: |
-          CLANG_BIN="$(pwd)/prebuilts/clang/host/linux-x86/clang-r416183b/bin"
-          export PATH="$CLANG_BIN:$PATH"
+          # Ambil jalur absolut binari clang
+          export CLANG_BIN="$(pwd)/prebuilts/clang/host/linux-x86/clang-r416183b/bin"
+          
+          # Monitor RAM
           (while true; do free -h | grep "Mem:" | awk '{print "RAM Usage: " $3 "/" $2}'; sleep 60; done) &
           MONITOR_PID=$!
+
+          # Hapus check_defconfig agar build tidak berhenti
           sed -i 's/check_defconfig//' common/build.config.gki
           
-          LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 \
-          ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-          CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- \
+          # EKSEKUSI UTAMA: Masukkan PATH langsung ke depan perintah build.sh
+          PATH="$CLANG_BIN:$PATH" \
+          LTO=thin \
+          BUILD_CONFIG=common/build.config.gki.aarch64 \
+          ARCH=arm64 \
+          LLVM=1 \
+          LLVM_IAS=1 \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          CROSS_COMPILE=aarch64-linux-android- \
           build/build.sh
+
           kill $MONITOR_PID
 
       - name: Upload Image Artifact
@@ -177,7 +189,7 @@ jobs:
         run: |
           if [ "${{ job.status }}" = "success" ]; then
             EMOJI="✅ SUCCESS"
-            MSG="Build Kernel Selesai!%0A📦 Nama: ${{ github.event.inputs.kernel_name }}%0A🔗 [Download Image Di Sini](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            MSG="Build Kernel Selesai!%0A📦 Nama: ${{ github.event.inputs.kernel_name }}%0A🔗 [Download Di Sini](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           else
             EMOJI="❌ FAILED"
             MSG="Build Gagal! Periksa log GitHub Actions."
