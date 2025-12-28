@@ -176,10 +176,7 @@ jobs:
           # SUSFS Hook Method
           CONFIG_KSU_SYSCALL_HOOK=n
           CONFIG_KSU_KPROBES_HOOK=n
-          CONFIG_KPROBES=y
-          CONFIG_KPROBE_EVENTS=y
-          CONFIG_KSU_KPROBE_HOOKS=y
-          CONFIG_KSU=y
+          
           # Add SUSFS configuration settings
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
@@ -204,6 +201,10 @@ jobs:
           # Kprobes Hook Method
           CONFIG_KSU_SYSCALL_HOOK=y
           CONFIG_KSU_KPROBES_HOOK=y
+          CONFIG_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_KSU_KPROBE_HOOKS=y
+          CONFIG_KSU=y
           # Disable SUSFS for kprobes method
           CONFIG_KSU_SUSFS=n
           EOF
