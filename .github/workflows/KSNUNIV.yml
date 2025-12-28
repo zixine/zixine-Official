@@ -54,8 +54,8 @@ jobs:
 
       - name: Configure Git
         run: |
-          git config --global user.name "titit"
-          git config --global user.email "Kingfinik98@gmail.com"
+          git config --global user.name "zixine"
+          git config --global user.email "waheid005@gmail.com"
 
       - name: Install build tools
         run: |
@@ -296,30 +296,14 @@ jobs:
           chmod +x scripts/setlocalversion
           
           KERNEL_NAME="${{ github.event.inputs.kernel_name }}"
-          HOOK_METHOD="${{ github.event.inputs.hook_method }}"
-          PERFORMANCE_PATCH="${{ github.event.inputs.performance_patch }}"
 
           if [ -n "$KERNEL_NAME" ]; then
-            # Construct the suffix
-            SUFFIX=""
-            if [ "$HOOK_METHOD" = "susfs" ]; then
-              SUFFIX="-SUSFS"
-            else
-              SUFFIX="-KPROBES"
-            fi
-            
-            if [ "$PERFORMANCE_PATCH" = "Snapdragon" ]; then
-              SUFFIX="${SUFFIX}-SNAPDRAGON"
-            else
-              SUFFIX="${SUFFIX}-MEDIATEK"
-            fi
-            
-            echo "Setting custom kernel name: $KERNEL_NAME$SUFFIX"
-            if grep -q '^EXTRAVERSION *=' Makefile; then
-              sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$KERNEL_NAME$SUFFIX/" Makefile
-            else
-              echo "EXTRAVERSION = -$KERNEL_NAME$SUFFIX" >> Makefile
-            fi
+             echo "Setting custom kernel name: $KERNEL_NAME"
+             if grep -q '^EXTRAVERSION *=' Makefile; then
+               sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$KERNEL_NAME/" Makefile
+             else
+               echo "EXTRAVERSION = -$KERNEL_NAME" >> Makefile
+             fi
           else
              echo "Kernel name input is empty. Skipping custom name (Using Default)."
           fi
@@ -367,13 +351,17 @@ jobs:
           path: gki/out/android12-5.10/common/arch/arm64/boot/Image
           if-no-files-found: warn
 
-      - name: Push to PixelDrain
-        if: always() 
+      - name: Telegram Notification
+        if: always()
         run: |
-          if [ -f gki/out/android12-5.10/common/arch/arm64/boot/Image ]; then
-            curl -u :cf8ac774-486a-4775-9028-e7f134fcafc8 \
-              -F file=@gki/out/android12-5.10/common/arch/arm64/boot/Image \
-              https://pixeldrain.com/api/file
+          if [ "${{ job.status }}" = "success" ]; then
+            EMOJI="✅ SUCCESS"
+            MSG="Build Kernel Selesai!%0A📦 Nama: ${{ github.event.inputs.kernel_name }}%0A🔗 [Download Image Di Sini](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           else
-            echo "Image file not found. Build likely failed."
+            EMOJI="❌ FAILED"
+            MSG="Build Gagal! Periksa log GitHub Actions."
           fi
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "text=${EMOJI}%0A------------------%0A${MSG}" \
+            -d "parse_mode=Markdown"
