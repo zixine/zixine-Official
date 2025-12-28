@@ -248,14 +248,14 @@ jobs:
 
           if [ -n "$KERNEL_NAME" ]; then
              if [ "$HOOK_METHOD" = "susfs" ]; then
-               echo "Setting custom kernel name: $KERNEL_NAME-SUSFS"
+               echo "Setting custom kernel name: $KERNEL_NAME"
                if grep -q '^EXTRAVERSION *=' Makefile; then
                  sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$KERNEL_NAME-SUSFS/" Makefile
                else
                  echo "EXTRAVERSION = -$KERNEL_NAME-SUSFS" >> Makefile
                fi
              else
-               echo "Setting custom kernel name: $KERNEL_NAME-KPROBES"
+               echo "Setting custom kernel name: $KERNEL_NAME"
                if grep -q '^EXTRAVERSION *=' Makefile; then
                  sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$KERNEL_NAME-KPROBES/" Makefile
                else
