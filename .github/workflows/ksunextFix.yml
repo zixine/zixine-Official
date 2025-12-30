@@ -1,4 +1,4 @@
-.# KSUN2 Preshoot Universal mode (Snapdragon/MediaTek)
+# KSUN2 Preshoot Universal mode (Snapdragon/MediaTek)
 
 on:
   workflow_dispatch:
