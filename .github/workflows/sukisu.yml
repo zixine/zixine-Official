@@ -265,30 +265,8 @@ jobs:
         run: |
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
-      - name: Package AnyKernel3
-        run: |
-           echo "🚀 Starting kernel packaging process..."
-           git clone --depth=1 https://github.com/linastorvaldz/anykernel -b android12-5.10 anykernel
-           
-           # Ambil nama kernel yang sudah dibuild
-           LINUX_VERSION=$(make -s kernelversion -C gki/common | tr -d '\n\r')
-           echo "Detected Kernel Version: $LINUX_VERSION"
-           
-           # Salin Image
-           cp gki/out/android12-5.10/dist/Image anykernel/
-           
-           cd anykernel
-           # Inject nama kernel ke anykernel script agar tampil di TWRP saat flash
-           sed -i "s|kernel.string=.*|kernel.string=$LINUX_VERSION|g" anykernel.sh
-           
-           # Buat nama zip yang informatif
-           ZIP_NAME="Kernel-${LINUX_VERSION}.zip"
-           zip -r9 ../$ZIP_NAME ./*
-           
-           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
-
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ZIP_NAME }}
-          path: ${{ env.ZIP_NAME }}
+          name: Image-${{ github.event.inputs.performance_patch }}
+          path: gki/out/android12-5.10/dist/Image
