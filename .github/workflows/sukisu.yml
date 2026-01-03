@@ -6,7 +6,7 @@ on:
       kernel_name:
         description: 'Custom Kernel Name (Leave empty for default)'
         required: false
-        default: 'SukiSU-Kernel'
+        default: ''
         type: string
       release_status:
         description: 'Release Status'
