@@ -1,0 +1,168 @@
+name: Build Kernel (SukiSU + SUSFS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_name:
+        description: 'Nama Kernel Kustom (Opsional)'
+        required: false
+        default: 'SukiSU-Kernel'
+        type: string
+      performance_patch:
+        description: 'Patch Performa SoC'
+        required: true
+        type: choice
+        default: 'Universal'
+        options:
+          - 'Snapdragon'
+          - 'MediaTek'
+          - 'Universal'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Kernel GKI
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Free disk space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          swap-size-mb: 10240
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-codeql: 'true'
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+
+      - name: Install build tools
+        run: |
+          sudo apt update && sudo apt upgrade -y
+          sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
+            libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld
+
+      - name: Init & Sync GKI Source
+        run: |
+          mkdir gki && cd gki
+          # Mengambil basis kernel GKI Android 12 5.10 dari Google
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
+          repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
+
+      - name: Fetch User Kernel Source (Zixine)
+        run: |
+          cd gki/common
+          #MENAMBAHKAN REMOTE ZIXINE
+          git remote add zixine https://github.com/zixine/kernel-android12-5.10.git
+          git fetch -j12 zixine
+          
+          # Checkout ke branch 'mglru' dari repo zixine
+          git checkout -b build-kernel zixine/mglru
+
+      - name: Apply Performance Patch
+        if: github.event.inputs.performance_patch == 'Snapdragon'
+        working-directory: gki/common
+        run: |
+          echo "🚀 [Snapdragon] Applying patch..."
+          TARGET="drivers/cpufreq/qcom-cpufreq-hw.c"
+          # Mengambil patch optimasi frekuensi CPU
+          curl -L "https://raw.githubusercontent.com/Pzqqt/android_kernel_xiaomi_marble/refs/heads/melt-rebase/drivers/cpufreq/qcom-cpufreq-hw.c" -o /tmp/patch.c
+          if [ -f "$TARGET" ]; then
+             cp /tmp/patch.c "$TARGET"
+             echo "✅ Patch Applied."
+          else
+             echo "⚠️ File target tidak ditemukan, skip patch."
+          fi
+
+      - name: Setup SukiSU & SUSFS
+        run: |
+          cd gki/common
+          echo "[INFO] Setup SukiSU..."
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s tmp-builtin
+          
+          echo "[INFO] Setup SUSFS..."
+          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
+          rm -rf sus/.git
+          # Menyalin patch SUSFS
+          cp -r sus/kernel_patches/fs/* fs/
+          cp -r sus/kernel_patches/include/* include/
+          # Terapkan patch utama
+          patch -p1 < sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || echo "⚠️ Patch SUSFS mungkin conflict, cek log nanti."
+
+      - name: Inject Configuration (Defconfig)
+        working-directory: gki/common
+        run: |
+          DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          
+          # 1. Inject Config SukiSU & SUSFS Wajib
+          cat >> $DEFCONFIG <<EOF
+          CONFIG_KSU=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          CONFIG_KPROBES=y
+          CONFIG_HAVE_KPROBES=y
+          CONFIG_KRETPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          EOF
+
+          # 2. Inject Config Performa sesuai input
+          if [ "${{ github.event.inputs.performance_patch }}" = "MediaTek" ]; then
+            echo "CONFIG_HZ=500" >> $DEFCONFIG
+          elif [ "${{ github.event.inputs.performance_patch }}" = "Universal" ]; then
+             echo "CONFIG_HZ_300=y" >> $DEFCONFIG
+          fi
+          
+          # 3. Optimasi TCP BBR
+          echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG
+          echo "CONFIG_DEFAULT_BBR=y" >> $DEFCONFIG
+
+      - name: Setup Clang (Google Prebuilt)
+        working-directory: gki
+        run: |
+          # Menggunakan Clang r536225 (Clang 19) stabil
+          CLANG_VER="clang-r536225"
+          mkdir -p prebuilts-master/clang/host/linux-x86/$CLANG_VER
+          cd prebuilts-master/clang/host/linux-x86
+          curl -L "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz" | tar -xz -C $CLANG_VER
+          # Symlink agar build system mengenalinya sebagai clang default
+          ln -sf $CLANG_VER clang-r416183b
+
+      - name: Build Kernel
+        working-directory: gki
+        run: |
+          # Perintah build standar GKI
+          LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+
+      - name: Package AnyKernel3
+        run: |
+           git clone --depth=1 https://github.com/linastorvaldz/anykernel -b android12-5.10 anykernel
+           # Salin Image hasil build ke folder anykernel
+           cp gki/out/android12-5.10/dist/Image anykernel/
+           cd anykernel
+           # Ubah nama kernel di script anykernel (opsional)
+           sed -i "s/kernel.string=.*/kernel.string=${{ github.event.inputs.kernel_name }}/g" anykernel.sh
+           # Zip hasilnya
+           zip -r9 ../Kernel-SukiSU-Update.zip ./*
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel-SukiSU-${{ github.event.inputs.performance_patch }}
+          path: Kernel-SukiSU-Update.zip
