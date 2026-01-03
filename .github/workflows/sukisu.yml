@@ -96,7 +96,7 @@ jobs:
           cp -r sus/kernel_patches/include/* include/
           # Terapkan patch utama
           patch -p1 < sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch || echo "⚠️ Patch SUSFS mungkin conflict, cek log nanti."
-
+      
       - name: Inject Configuration (Defconfig)
         working-directory: gki/common
         run: |
